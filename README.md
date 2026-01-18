@@ -44,6 +44,8 @@ viberun myapp
 
 If this is the first run, the server will prompt to create the container. Press Enter to accept.
 
+To disconnect without stopping the agent, press Ctrl-\\ to detach. Reattach later with `viberun myapp`.
+
 ### 4) Use Codex to build a hello-world app
 
 In the agent session, use a prompt like:

@@ -15,19 +15,19 @@ case "$mode" in
     ;;
   right)
     if [ -z "$port" ]; then
-      printf "ctrl-d to exit"
+      printf "ctrl-\\ to detach"
       exit 0
     fi
     if command -v ss >/dev/null 2>&1; then
       if ss -ltn 2>/dev/null | grep -q ":8080 "; then
-        printf "http://localhost:%s  ctrl-d to exit" "$port"
+        printf "http://localhost:%s  ctrl-\\ to detach" "$port"
       fi
     elif command -v netstat >/dev/null 2>&1; then
       if netstat -ltn 2>/dev/null | grep -q ":8080 "; then
-        printf "http://localhost:%s  ctrl-d to exit" "$port"
+        printf "http://localhost:%s  ctrl-\\ to detach" "$port"
       fi
     else
-      printf "http://localhost:%s  ctrl-d to exit" "$port"
+      printf "http://localhost:%s  ctrl-\\ to detach" "$port"
     fi
     ;;
 esac

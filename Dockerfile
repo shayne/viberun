@@ -2,6 +2,7 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CODEX_HOME=/root/.codex
+ENV VIBERUN_APP_DIR=/app
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 ENV LC_CTYPE=C.UTF-8
@@ -103,5 +104,7 @@ RUN mkdir -p ${CODEX_HOME} \
     'steer = true' \
     > ${CODEX_HOME}/config.toml
 RUN mkdir -p /etc/services.d /var/log/vrctl
+
+WORKDIR /app
 
 CMD ["/usr/bin/s6-svscan", "/etc/services.d"]
