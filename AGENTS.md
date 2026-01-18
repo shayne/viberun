@@ -1,37 +1,38 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `cmd/`: Go entrypoints (`viberun`, `viberun-server`).
-- `internal/`: core packages (config, server state, SSH args, target parsing).
-- `bin/`: helper scripts (`viberun-e2e-local`, `viberun-integration`, installers).
-- `skills/`: Codex skills and templates used inside containers.
-- `Dockerfile`: base container image.
+- `cmd/`: Go entrypoints (`viberun`, `viberun-server`). Main CLI and host-side server logic live here.
+- `internal/`: Core packages (config, server state, SSH args, target parsing, TUI helpers).
+- `bin/`: Helper scripts for installs, integration/E2E flows, and container utilities (e.g., `viberun-install`, `viberun-integration`, `vrctl`).
+- `skills/`: Codex skill definitions used inside containers.
+- `config/`: Shell/TMUX/Starship config and runtime assets (e.g., terminfo).
+- `Dockerfile`: Base container image definition.
 
 ## Build, Test, and Development Commands
-- `mise install`: installs toolchain pinned by `mise`.
-- `mise exec -- go build ./cmd/viberun`: build CLI.
-- `mise exec -- go build ./cmd/viberun-server`: build server binary.
-- `mise exec -- go test ./...`: run all Go tests.
-- `mise exec -- go vet ./...`: static analysis.
-- `docker build -t viberun .`: build container image (fallback).
-- `bin/viberun-e2e-local`: local E2E flow via SSH.
-- `bin/viberun-integration`: integration checks against a host.
+- `mise install`: Install pinned toolchain versions.
+- `mise exec -- go build ./cmd/viberun`: Build the CLI.
+- `mise exec -- go build ./cmd/viberun-server`: Build the host server.
+- `mise exec -- go test ./...`: Run all Go tests.
+- `mise exec -- go vet ./...`: Static analysis.
+- `docker build -t viberun .`: Build the container image.
+- `bin/viberun-e2e-local`: Local E2E flow (Docker + SSH).
+- `bin/viberun-integration`: Integration checks against a host.
 
 ## Coding Style & Naming Conventions
 - Go code is formatted with `gofmt` (tabs for indentation).
-- Package names are lower-case; exported identifiers are `CamelCase`.
+- Package names are lower-case; exported identifiers use `CamelCase`.
 - Shell scripts in `bin/` should be POSIX‑ish and include `set -e` where appropriate.
+- Prefer small, testable helpers for logic that can be unit tested (e.g., argument builders, parsing).
 
 ## Testing Guidelines
-- Use `go test ./...` for unit tests and `go vet ./...` for linting.
-- E2E scripts live in `bin/` and assume Docker + SSH.
-- No explicit coverage target is defined—add tests for new logic where feasible.
+- Tests use Go’s standard testing framework.
+- Run all tests with `go test ./...`; coverage can be measured via `go test ./... -coverprofile=coverage.out`.
+- Test files follow `*_test.go` naming. Favor unit tests for pure logic and small helpers; integration tests live in `bin/`.
 
 ## Commit & Pull Request Guidelines
-- Recent commit history uses a short scope prefix, e.g. `bootstrap: ...`, `client: ...`.
-- Prefer imperative, single‑line subjects (example: `server: fix port sync`).
-- PRs should describe the change, mention tests run, and call out any risk areas.
+- Commit messages use a short scope prefix (e.g., `server: ...`, `client: ...`, `bootstrap: ...`).
+- Use imperative, single-line subjects.
+- PRs should include: summary of changes, tests run, and risk areas. Link relevant issues if applicable.
 
 ## Agent & Skills Notes
-- Skills live under `skills/` and are baked into the container image.
-- If you change skill behavior, rebuild the image and re‑bootstrap the host.
+- Skills in `skills/` are baked into the container image. If you change skill behavior, rebuild the image and re‑bootstrap the host.

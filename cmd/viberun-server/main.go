@@ -246,12 +246,25 @@ func main() {
 		}
 	}
 
-	if err := dockerExec(containerName, agentArgs); err != nil {
+	var hostRPC *hostRPCServer
+	extraEnv := map[string]string{}
+	if action == "" || action == "shell" {
+		var err error
+		hostRPC, extraEnv, err = startHostRPC(app, containerName, port, createSnapshot, listSnapshots, restoreSnapshot)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to start host rpc: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	if err := dockerExec(containerName, agentArgs, extraEnv); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			os.Exit(exitErr.ExitCode())
 		}
 		fmt.Fprintf(os.Stderr, "failed to exec shell: %v\n", err)
 		os.Exit(1)
+	}
+	if hostRPC != nil {
+		_ = hostRPC.Close()
 	}
 }
 
@@ -433,6 +446,9 @@ func listContainers() ([]string, error) {
 }
 
 func dockerRun(name string, app string, port int) error {
+	if err := ensureHostRPCDir(app); err != nil {
+		return err
+	}
 	args := dockerRunArgs(name, app, port, defaultImage)
 	cmd := exec.Command("docker", args...)
 	cmd.Stdout = os.Stdout
@@ -447,7 +463,7 @@ func dockerStart(name string) error {
 	return cmd.Run()
 }
 
-func dockerExec(name string, agentArgs []string) error {
+func dockerExec(name string, agentArgs []string, extraEnv map[string]string) error {
 	if len(agentArgs) == 0 {
 		agentArgs = []string{"/bin/bash"}
 	}
@@ -461,6 +477,12 @@ func dockerExec(name string, agentArgs []string) error {
 	}
 	if agentCheck := strings.TrimSpace(os.Getenv("VIBERUN_AGENT_CHECK")); agentCheck != "" {
 		env["VIBERUN_AGENT_CHECK"] = agentCheck
+	}
+	for key, value := range extraEnv {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			continue
+		}
+		env[key] = value
 	}
 	args := dockerExecArgs(name, agentArgs, tty, env)
 	cmd := exec.Command("docker", args...)
@@ -672,6 +694,9 @@ func latestSnapshotRef(app string) (string, error) {
 
 func restoreSnapshot(containerName string, app string, port int, snapshotRef string) error {
 	_ = exec.Command("docker", "rm", "-f", containerName).Run()
+	if err := ensureHostRPCDir(app); err != nil {
+		return err
+	}
 	args := dockerRunArgs(containerName, app, port, snapshotRef)
 	cmd := exec.Command("docker", args...)
 	cmd.Stdout = os.Stdout
@@ -680,6 +705,7 @@ func restoreSnapshot(containerName string, app string, port int, snapshotRef str
 }
 
 func dockerRunArgs(name string, app string, port int, image string) []string {
+	hostRPC := hostRPCConfigForApp(app)
 	args := []string{
 		"run",
 		"-d",
@@ -698,6 +724,14 @@ func dockerRunArgs(name string, app string, port int, image string) []string {
 		"-e",
 		fmt.Sprintf("VIBERUN_PORT=%d", port),
 	}
+	args = append(args,
+		"-v",
+		fmt.Sprintf("%s:%s", hostRPC.HostDir, hostRPC.ContainerDir),
+		"-e",
+		fmt.Sprintf("VIBERUN_HOST_RPC_SOCKET=%s", hostRPC.ContainerSocket),
+		"-e",
+		fmt.Sprintf("VIBERUN_HOST_RPC_TOKEN_FILE=%s", hostRPC.ContainerTokenFile),
+	)
 	if socketPath, ok := xdgOpenSocketPath(); ok {
 		args = append(args,
 			"-v",

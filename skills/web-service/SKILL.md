@@ -34,12 +34,24 @@ vrctl service add <app> \
 1) Ensure `/workspace/<app>` exists and contains the server entrypoint.
 2) Use a foreground command (no daemonize/no nohup).
 3) Add the service once with `vrctl service add` (include `--cwd` + `--env PORT=8080 --env HOST=0.0.0.0`).
-4) If the service already exists, run `vrctl service remove <app>` then re-add.
-5) After add, check status + logs.
+4) If the service exists and you changed the command/cwd/env, remove then re-add. Otherwise use `vrctl service restart`.
+5) After add/restart, check status + logs.
 
 ## Common failure and recovery
+- If the service exits due to app errors, fix the app then run `vrctl service restart <app>`.
 - If service start fails, wait 1–2s and retry once. Do not manage supervisors directly.
 - If it still fails, report that the service manager in the container isn’t ready and ask the user to restart the app session.
+
+## Snapshot guidance
+- If the user asks to save progress, run `vrctl host snapshot` and report the snapshot ref.
+- Before risky or destructive changes (removing services, deleting data, large refactors), ask the user if they want a snapshot.
+  - If they say yes and host snapshots are available, run `vrctl host snapshot`.
+  - If host snapshots are unavailable, ask the user to run `viberun <app> snapshot` from their machine.
+- If they say no, proceed without snapshot and note it briefly.
+- If the user asks to roll back, run `vrctl host snapshots` to list available tags, then `vrctl host restore <ref>`.
+  - Accept either a tag or full ref; if given a tag, pass it as-is and let the host resolve it.
+  - Restore will disconnect the session; tell the user to re-run `viberun <app>` and then re-check service status / bring it back up.
+  - If restore is unavailable, ask the user to run `viberun <app> restore <ref>` from their machine.
 
 ## Language/tooling preferences
 - Prefer typed Python (type annotations) and use uv exclusively for env/deps and running (`uv init`, `uv add`, `uv run`); avoid pip/venv directly.
@@ -48,7 +60,7 @@ vrctl service add <app> \
 
 ## Guardrails
 - Do not call s6 or manage supervisors directly.
-- If vrctl reports the supervisor is not listening, stop and tell the user to restart the app session (or recreate the container) instead of trying to fix s6 manually.
+- If vrctl reports the supervisor is not listening, stop and tell the user to restart the app session instead of trying to fix s6 manually.
 
 ## User-facing notes
 - Treat the host port as the only user-facing port; do not mention 8080 unless the user explicitly asks.

@@ -83,3 +83,38 @@ func TestNormalizeTermValue(t *testing.T) {
 		}
 	}
 }
+
+func TestParsePortMapping(t *testing.T) {
+	output := "0.0.0.0:49160\n"
+	if port, ok := parsePortMapping(output); !ok || port != 49160 {
+		t.Fatalf("expected port 49160, got %d ok=%v", port, ok)
+	}
+	output = ":::49161\n"
+	if port, ok := parsePortMapping(output); !ok || port != 49161 {
+		t.Fatalf("expected port 49161, got %d ok=%v", port, ok)
+	}
+	output = "invalid\n"
+	if port, ok := parsePortMapping(output); ok || port != 0 {
+		t.Fatalf("expected no port, got %d ok=%v", port, ok)
+	}
+}
+
+func TestResolveSnapshotRef(t *testing.T) {
+	ref, err := resolveSnapshotRef("myapp", "customtag")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ref != "viberun-snapshot-myapp:customtag" {
+		t.Fatalf("unexpected ref: %q", ref)
+	}
+	ref, err = resolveSnapshotRef("myapp", "repo:tag")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ref != "repo:tag" {
+		t.Fatalf("unexpected ref: %q", ref)
+	}
+	if _, err := resolveSnapshotRef("myapp", ""); err == nil {
+		t.Fatalf("expected error for empty snapshot name")
+	}
+}

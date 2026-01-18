@@ -15,6 +15,9 @@ Usage:
   vrctl service logs <name> [-n <lines>]
   vrctl service list
   vrctl service remove <name>
+  vrctl host snapshot
+  vrctl host snapshots
+  vrctl host restore <snapshot-ref>
 EOF
   exit 2
 }
@@ -261,6 +264,43 @@ service_remove() {
   rm -rf "$dir"
 }
 
+host_snapshot() {
+  socket="${VIBERUN_HOST_RPC_SOCKET:-/var/run/viberun-hostrpc/rpc.sock}"
+  token_file="${VIBERUN_HOST_RPC_TOKEN_FILE:-/var/run/viberun-hostrpc/token}"
+  [ -S "$socket" ] || die "host rpc socket not available; restart the app session"
+  [ -r "$token_file" ] || die "host rpc token not available; restart the app session"
+  token="$(tr -d '\n' < "$token_file")"
+  [ -n "$token" ] || die "host rpc token not available; restart the app session"
+  command -v curl >/dev/null 2>&1 || die "curl is required for host snapshot"
+  curl -fsS --unix-socket "$socket" -H "Authorization: Bearer $token" -X POST http://localhost/snapshot
+}
+
+host_snapshots() {
+  socket="${VIBERUN_HOST_RPC_SOCKET:-/var/run/viberun-hostrpc/rpc.sock}"
+  token_file="${VIBERUN_HOST_RPC_TOKEN_FILE:-/var/run/viberun-hostrpc/token}"
+  [ -S "$socket" ] || die "host rpc socket not available; restart the app session"
+  [ -r "$token_file" ] || die "host rpc token not available; restart the app session"
+  token="$(tr -d '\n' < "$token_file")"
+  [ -n "$token" ] || die "host rpc token not available; restart the app session"
+  command -v curl >/dev/null 2>&1 || die "curl is required for host snapshots"
+  curl -fsS --unix-socket "$socket" -H "Authorization: Bearer $token" http://localhost/snapshots
+}
+
+host_restore() {
+  [ $# -eq 1 ] || usage
+  ref="$1"
+  socket="${VIBERUN_HOST_RPC_SOCKET:-/var/run/viberun-hostrpc/rpc.sock}"
+  token_file="${VIBERUN_HOST_RPC_TOKEN_FILE:-/var/run/viberun-hostrpc/token}"
+  [ -S "$socket" ] || die "host rpc socket not available; restart the app session"
+  [ -r "$token_file" ] || die "host rpc token not available; restart the app session"
+  token="$(tr -d '\n' < "$token_file")"
+  [ -n "$token" ] || die "host rpc token not available; restart the app session"
+  command -v curl >/dev/null 2>&1 || die "curl is required for host restore"
+  printf '%s' "$ref" | curl -fsS --unix-socket "$socket" -H "Authorization: Bearer $token" -X POST --data-binary @- http://localhost/restore >/dev/null
+  app_name="${VIBERUN_APP:-app}"
+  echo "restore triggered for ${app_name}; this session will disconnect" >&2
+}
+
 main() {
   [ $# -ge 1 ] || usage
   case "$1" in
@@ -277,6 +317,17 @@ main() {
         logs) service_logs "$@" ;;
         list) service_list "$@" ;;
         remove) service_remove "$@" ;;
+        *) usage ;;
+      esac
+      ;;
+    host)
+      [ $# -ge 2 ] || usage
+      sub="$2"
+      shift 2
+      case "$sub" in
+        snapshot) host_snapshot ;;
+        snapshots) host_snapshots ;;
+        restore) host_restore "$@" ;;
         *) usage ;;
       esac
       ;;

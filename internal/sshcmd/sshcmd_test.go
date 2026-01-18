@@ -132,3 +132,21 @@ func TestBuildArgsWithRemoteSocketForward(t *testing.T) {
 		t.Fatalf("unexpected remote forward: %v", args[6])
 	}
 }
+
+func TestBuildPortForwardArgs(t *testing.T) {
+	forward := &LocalForward{
+		LocalPort:  9000,
+		RemoteHost: "localhost",
+		RemotePort: 9001,
+	}
+	args := BuildPortForwardArgs("host-a", forward)
+	expected := []string{"-T", "-N", "-o", "ExitOnForwardFailure=yes", "-L", "9000:localhost:9001", "host-a"}
+	if len(args) != len(expected) {
+		t.Fatalf("unexpected args length: got %v want %v", args, expected)
+	}
+	for i, value := range expected {
+		if args[i] != value {
+			t.Fatalf("unexpected arg at %d: got %q want %q (args=%v)", i, args[i], value, args)
+		}
+	}
+}

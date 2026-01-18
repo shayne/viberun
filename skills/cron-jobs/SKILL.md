@@ -43,3 +43,14 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 ## User-facing notes
 - Keep explanations non-technical; only mention vrctl if the user explicitly asks how services are managed.
+
+## Snapshot guidance
+- If the user asks to save progress, run `vrctl host snapshot` and report the snapshot ref.
+- Before risky or destructive changes (removing services, deleting data, large refactors), ask the user if they want a snapshot.
+  - If they say yes and host snapshots are available, run `vrctl host snapshot`.
+  - If host snapshots are unavailable, ask the user to run `viberun <app> snapshot` from their machine.
+- If they say no, proceed without snapshot and note it briefly.
+- If the user asks to roll back, run `vrctl host snapshots` to list available tags, then `vrctl host restore <ref>`.
+  - Accept either a tag or full ref; if given a tag, pass it as-is and let the host resolve it.
+  - Restore will disconnect the session; tell the user to re-run `viberun <app>` and then re-check service status / bring it back up.
+  - If restore is unavailable, ask the user to run `viberun <app> restore <ref>` from their machine.
