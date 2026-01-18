@@ -4,7 +4,10 @@
 
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestTmuxSessionArgsUsesDefaults(t *testing.T) {
 	args := tmuxSessionArgs("", "", nil)
@@ -119,5 +122,69 @@ func TestResolveSnapshotRef(t *testing.T) {
 	}
 	if _, err := resolveSnapshotRef("myapp", ""); err == nil {
 		t.Fatalf("expected error for empty snapshot name")
+	}
+}
+
+func TestSnapshotVersion(t *testing.T) {
+	cases := map[string]struct {
+		version int
+		ok      bool
+	}{
+		"v1":     {1, true},
+		"v12":    {12, true},
+		"V3":     {3, true},
+		"v0":     {0, false},
+		"v-1":    {0, false},
+		"v1x":    {0, false},
+		"latest": {0, false},
+		"":       {0, false},
+	}
+	for input, expected := range cases {
+		version, ok := snapshotVersion(input)
+		if ok != expected.ok || version != expected.version {
+			t.Fatalf("snapshotVersion(%q)=%d,%v want %d,%v", input, version, ok, expected.version, expected.ok)
+		}
+	}
+}
+
+func TestNextSnapshotTagFromInfos(t *testing.T) {
+	if tag := nextSnapshotTagFromInfos(nil); tag != "v1" {
+		t.Fatalf("expected v1, got %q", tag)
+	}
+	tag := nextSnapshotTagFromInfos([]SnapshotInfo{
+		{Tag: "v2"},
+		{Tag: "v5"},
+		{Tag: "custom"},
+	})
+	if tag != "v6" {
+		t.Fatalf("expected v6, got %q", tag)
+	}
+}
+
+func TestLatestSnapshotRefFromInfos(t *testing.T) {
+	now := time.Now()
+	infos := []SnapshotInfo{
+		{Tag: "v2", CreatedAt: now.Add(-2 * time.Hour)},
+		{Tag: "v5", CreatedAt: now.Add(-10 * time.Hour)},
+		{Tag: "v3", CreatedAt: now.Add(-1 * time.Hour)},
+	}
+	ref, err := latestSnapshotRefFromInfos("app", infos)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ref != "viberun-snapshot-app:v5" {
+		t.Fatalf("expected v5 latest, got %q", ref)
+	}
+
+	infos = []SnapshotInfo{
+		{Tag: "tag-a", CreatedAt: now.Add(-2 * time.Hour)},
+		{Tag: "tag-b", CreatedAt: now.Add(-1 * time.Hour)},
+	}
+	ref, err = latestSnapshotRefFromInfos("app", infos)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ref != "viberun-snapshot-app:tag-b" {
+		t.Fatalf("expected newest tag-b, got %q", ref)
 	}
 }

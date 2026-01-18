@@ -6,6 +6,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/term"
@@ -28,6 +30,71 @@ const defaultImage = "viberun:latest"
 
 type serverFlags struct {
 	Agent string `flag:"agent" help:"agent provider to run (codex, claude, gemini, ampcode, opencode, or npx:<pkg>/uvx:<pkg>)"`
+}
+
+type SnapshotInfo struct {
+	Tag          string
+	CreatedAt    time.Time
+	CreatedAtRaw string
+}
+
+type restoreQueue struct {
+	mu         sync.Mutex
+	inProgress bool
+	ref        string
+	ch         chan struct{}
+}
+
+var errRestoreInProgress = errors.New("restore already in progress")
+
+func newRestoreQueue() *restoreQueue {
+	return &restoreQueue{ch: make(chan struct{}, 1)}
+}
+
+func (q *restoreQueue) Enqueue(ref string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.inProgress {
+		return errRestoreInProgress
+	}
+	q.inProgress = true
+	q.ref = ref
+	select {
+	case q.ch <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+func (q *restoreQueue) Next() (string, bool) {
+	select {
+	case <-q.ch:
+		q.mu.Lock()
+		ref := q.ref
+		q.mu.Unlock()
+		return ref, true
+	default:
+		return "", false
+	}
+}
+
+func (q *restoreQueue) Current() string {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.ref
+}
+
+func (q *restoreQueue) Pending() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.inProgress
+}
+
+func (q *restoreQueue) Finish() {
+	q.mu.Lock()
+	q.inProgress = false
+	q.ref = ""
+	q.mu.Unlock()
 }
 
 func main() {
@@ -119,18 +186,18 @@ func main() {
 		return
 	}
 	if action == "snapshots" {
-		tags, err := listSnapshots(app)
+		lines, err := listSnapshotLines(app)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to list snapshots: %v\n", err)
 			os.Exit(1)
 		}
-		if len(tags) == 0 {
+		if len(lines) == 0 {
 			fmt.Fprintf(os.Stdout, "No snapshots found for %s\n", app)
 			return
 		}
 		fmt.Fprintf(os.Stdout, "Snapshots for %s:\n", app)
-		for _, tag := range tags {
-			fmt.Fprintf(os.Stdout, "  %s %s\n", app, tag)
+		for _, line := range lines {
+			fmt.Fprintf(os.Stdout, "  %s\n", line)
 		}
 		return
 	}
@@ -256,40 +323,44 @@ func main() {
 		}
 	}
 
-	var hostRPC *hostRPCServer
-	extraEnv := map[string]string{}
 	if action == "" || action == "shell" {
-		var err error
-		hostRPC, extraEnv, err = startHostRPC(app, containerName, port, createSnapshot, listSnapshots, restoreSnapshot)
+		restoreQueue := newRestoreQueue()
+		hostRPC, extraEnv, err := startHostRPC(app, containerName, port, createSnapshot, listSnapshotLines, func(_ string, _ string, _ int, snapshotRef string) error {
+			if err := ensureSnapshotExists(snapshotRef); err != nil {
+				return err
+			}
+			return restoreQueue.Enqueue(snapshotRef)
+		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to start host rpc: %v\n", err)
 			os.Exit(1)
 		}
-	}
-	for key, value := range bundleEnv {
-		extraEnv[key] = value
-	}
-	if strings.TrimSpace(agentLabel) != "" {
-		extraEnv["VIBERUN_AGENT"] = agentLabel
-	}
-	if action == "" {
-		if err := checkCustomAgent(app, containerName, agentSpec, extraEnv); err != nil {
-			if hostRPC != nil {
-				_ = hostRPC.Close()
+		for key, value := range bundleEnv {
+			extraEnv[key] = value
+		}
+		if strings.TrimSpace(agentLabel) != "" {
+			extraEnv["VIBERUN_AGENT"] = agentLabel
+		}
+		if action == "" {
+			if err := checkCustomAgent(app, containerName, agentSpec, extraEnv); err != nil {
+				if hostRPC != nil {
+					_ = hostRPC.Close()
+				}
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
 			}
-			fmt.Fprintln(os.Stderr, err)
+		}
+		if err := runInteractiveSession(containerName, app, port, agentArgs, extraEnv, restoreQueue); err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				os.Exit(exitErr.ExitCode())
+			}
+			fmt.Fprintf(os.Stderr, "session ended: %v\n", err)
 			os.Exit(1)
 		}
-	}
-	if err := dockerExec(containerName, agentArgs, extraEnv); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
+		if hostRPC != nil {
+			_ = hostRPC.Close()
 		}
-		fmt.Fprintf(os.Stderr, "failed to exec shell: %v\n", err)
-		os.Exit(1)
-	}
-	if hostRPC != nil {
-		_ = hostRPC.Close()
+		return
 	}
 }
 
@@ -658,7 +729,11 @@ func deleteApp(containerName string, app string, state *server.State, exists boo
 
 func createSnapshot(containerName string, app string) (string, error) {
 	repo := snapshotRepo(app)
-	tag := time.Now().UTC().Format("20060102-150405")
+	infos, err := listSnapshotInfos(app)
+	if err != nil {
+		return "", err
+	}
+	tag := nextSnapshotTagFromInfos(infos)
 	ref := fmt.Sprintf("%s:%s", repo, tag)
 	cmd := exec.Command("docker", "commit", containerName, ref)
 	cmd.Stdout = os.Stdout
@@ -683,47 +758,225 @@ func resolveSnapshotRef(app string, name string) (string, error) {
 	return fmt.Sprintf("%s:%s", snapshotRepo(app), normalized), nil
 }
 
-func listSnapshots(app string) ([]string, error) {
+func snapshotVersion(tag string) (int, bool) {
+	normalized := strings.TrimSpace(strings.ToLower(tag))
+	if normalized == "" {
+		return 0, false
+	}
+	if !strings.HasPrefix(normalized, "v") {
+		return 0, false
+	}
+	value, err := strconv.Atoi(strings.TrimPrefix(normalized, "v"))
+	if err != nil || value < 1 {
+		return 0, false
+	}
+	return value, true
+}
+
+func nextSnapshotTagFromInfos(infos []SnapshotInfo) string {
+	maxVersion := 0
+	for _, info := range infos {
+		if version, ok := snapshotVersion(info.Tag); ok && version > maxVersion {
+			maxVersion = version
+		}
+	}
+	return fmt.Sprintf("v%d", maxVersion+1)
+}
+
+func listSnapshotInfos(app string) ([]SnapshotInfo, error) {
 	repo := snapshotRepo(app)
-	out, err := exec.Command("docker", "images", "--format", "{{.Tag}}", repo).Output()
+	out, err := exec.Command("docker", "images", "--format", "{{.Tag}}|{{.CreatedAt}}", repo).Output()
 	if err != nil {
 		return nil, err
 	}
-	var tags []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		tag := strings.TrimSpace(line)
+	raw := strings.TrimSpace(string(out))
+	if raw == "" {
+		return nil, nil
+	}
+	var infos []SnapshotInfo
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 2)
+		tag := strings.TrimSpace(parts[0])
 		if tag == "" || tag == "<none>" {
 			continue
 		}
-		tags = append(tags, tag)
+		info := SnapshotInfo{Tag: tag}
+		if len(parts) == 2 {
+			createdRaw := strings.TrimSpace(parts[1])
+			info.CreatedAtRaw = createdRaw
+			if createdRaw != "" {
+				if createdAt, err := parseDockerCreatedAt(createdRaw); err == nil {
+					info.CreatedAt = createdAt
+				}
+			}
+		}
+		infos = append(infos, info)
 	}
-	sort.Strings(tags)
+	return infos, nil
+}
+
+func listSnapshotLines(app string) ([]string, error) {
+	infos, err := listSnapshotInfos(app)
+	if err != nil {
+		return nil, err
+	}
+	if len(infos) == 0 {
+		return nil, nil
+	}
+	sortSnapshotInfos(infos)
+	lines := make([]string, 0, len(infos))
+	for _, info := range infos {
+		lines = append(lines, formatSnapshotLine(info))
+	}
+	return lines, nil
+}
+
+func listSnapshots(app string) ([]string, error) {
+	infos, err := listSnapshotInfos(app)
+	if err != nil {
+		return nil, err
+	}
+	if len(infos) == 0 {
+		return nil, nil
+	}
+	sortSnapshotInfos(infos)
+	tags := make([]string, 0, len(infos))
+	for _, info := range infos {
+		if info.Tag == "" || info.Tag == "<none>" {
+			continue
+		}
+		tags = append(tags, info.Tag)
+	}
+	if len(tags) == 0 {
+		return nil, nil
+	}
 	return tags, nil
 }
 
+func sortSnapshotInfos(infos []SnapshotInfo) {
+	sort.Slice(infos, func(i, j int) bool {
+		left, right := infos[i], infos[j]
+		leftVersion, leftOk := snapshotVersion(left.Tag)
+		rightVersion, rightOk := snapshotVersion(right.Tag)
+		if leftOk && rightOk {
+			if leftVersion != rightVersion {
+				return leftVersion < rightVersion
+			}
+		} else if leftOk != rightOk {
+			return leftOk
+		}
+		if !left.CreatedAt.IsZero() && !right.CreatedAt.IsZero() {
+			if !left.CreatedAt.Equal(right.CreatedAt) {
+				return left.CreatedAt.Before(right.CreatedAt)
+			}
+		}
+		return left.Tag < right.Tag
+	})
+}
+
+func formatSnapshotLine(info SnapshotInfo) string {
+	if info.CreatedAtRaw != "" {
+		return fmt.Sprintf("%s %s", info.Tag, info.CreatedAtRaw)
+	}
+	if !info.CreatedAt.IsZero() {
+		return fmt.Sprintf("%s %s", info.Tag, info.CreatedAt.Format(time.RFC3339))
+	}
+	return info.Tag
+}
+
+func parseDockerCreatedAt(value string) (time.Time, error) {
+	const layout = "2006-01-02 15:04:05 -0700 MST"
+	return time.Parse(layout, strings.TrimSpace(value))
+}
+
+func latestSnapshotRefFromInfos(app string, infos []SnapshotInfo) (string, error) {
+	if len(infos) == 0 {
+		return "", fmt.Errorf("no snapshots found for %s", app)
+	}
+	maxVersion := 0
+	tag := ""
+	for _, info := range infos {
+		if version, ok := snapshotVersion(info.Tag); ok && version > maxVersion {
+			maxVersion = version
+			tag = info.Tag
+		}
+	}
+	if maxVersion > 0 && tag != "" {
+		return fmt.Sprintf("%s:%s", snapshotRepo(app), tag), nil
+	}
+	best := infos[0]
+	for _, info := range infos[1:] {
+		switch {
+		case best.CreatedAt.IsZero() && !info.CreatedAt.IsZero():
+			best = info
+		case !best.CreatedAt.IsZero() && !info.CreatedAt.IsZero() && info.CreatedAt.After(best.CreatedAt):
+			best = info
+		case best.CreatedAt.IsZero() && info.CreatedAt.IsZero() && info.Tag > best.Tag:
+			best = info
+		}
+	}
+	return fmt.Sprintf("%s:%s", snapshotRepo(app), best.Tag), nil
+}
+
 func latestSnapshotRef(app string) (string, error) {
-	repo := snapshotRepo(app)
-	out, err := exec.Command("docker", "images", "--format", "{{.Tag}}", repo).Output()
+	infos, err := listSnapshotInfos(app)
 	if err != nil {
 		return "", err
 	}
-	var tags []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		tag := strings.TrimSpace(line)
-		if tag == "" || tag == "<none>" {
-			continue
-		}
-		tags = append(tags, tag)
-	}
-	if len(tags) == 0 {
-		return "", fmt.Errorf("no snapshots found for %s", app)
-	}
-	sort.Strings(tags)
-	return fmt.Sprintf("%s:%s", repo, tags[len(tags)-1]), nil
+	return latestSnapshotRefFromInfos(app, infos)
 }
 
-func restoreSnapshot(containerName string, app string, port int, snapshotRef string) error {
-	_ = exec.Command("docker", "rm", "-f", containerName).Run()
+func ensureSnapshotExists(snapshotRef string) error {
+	exists, err := snapshotExists(snapshotRef)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("snapshot not found: %s", snapshotRef)
+	}
+	return nil
+}
+
+func snapshotExists(snapshotRef string) (bool, error) {
+	if strings.TrimSpace(snapshotRef) == "" {
+		return false, fmt.Errorf("snapshot ref required")
+	}
+	cmd := exec.Command("docker", "image", "inspect", snapshotRef)
+	if err := cmd.Run(); err != nil {
+		if _, ok := err.(*exec.ExitError); ok {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func prepareRestore(containerName string) (string, error) {
+	exists, err := containerExists(containerName)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
+		return "", nil
+	}
+	_ = exec.Command("docker", "stop", containerName).Run()
+	backupName := fmt.Sprintf("%s-restore-%s", containerName, time.Now().UTC().Format("20060102-150405"))
+	cmd := exec.Command("docker", "rename", containerName, backupName)
+	if err := cmd.Run(); err != nil {
+		exists, existsErr := containerExists(containerName)
+		if existsErr == nil && !exists {
+			return "", nil
+		}
+		return "", err
+	}
+	return backupName, nil
+}
+
+func runSnapshot(containerName string, app string, port int, snapshotRef string) error {
 	if err := ensureHostRPCDir(app); err != nil {
 		return err
 	}
@@ -732,6 +985,143 @@ func restoreSnapshot(containerName string, app string, port int, snapshotRef str
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func rollbackRestore(containerName string, backupName string) error {
+	if strings.TrimSpace(backupName) == "" {
+		return nil
+	}
+	_ = exec.Command("docker", "rm", "-f", containerName).Run()
+	if err := exec.Command("docker", "rename", backupName, containerName).Run(); err != nil {
+		return err
+	}
+	if err := exec.Command("docker", "start", containerName).Run(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func restoreSnapshot(containerName string, app string, port int, snapshotRef string) error {
+	if err := ensureSnapshotExists(snapshotRef); err != nil {
+		return err
+	}
+	backupName, err := prepareRestore(containerName)
+	if err != nil {
+		return err
+	}
+	if err := runSnapshot(containerName, app, port, snapshotRef); err != nil {
+		if rollbackErr := rollbackRestore(containerName, backupName); rollbackErr != nil {
+			return fmt.Errorf("restore failed: %v (rollback failed: %v)", err, rollbackErr)
+		}
+		return err
+	}
+	if strings.TrimSpace(backupName) != "" {
+		_ = exec.Command("docker", "rm", "-f", backupName).Run()
+	}
+	return nil
+}
+
+func waitForContainerRunning(name string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		running, err := containerRunning(name)
+		if err == nil && running {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				return fmt.Errorf("container did not start: %v", err)
+			}
+			return fmt.Errorf("container did not start in time")
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+func writeRestoreBanner(out io.Writer, snapshotRef string) {
+	fmt.Fprintln(out, "")
+	fmt.Fprintf(out, "Restoring snapshot %s...\n", snapshotRef)
+	fmt.Fprintln(out, "Please wait; reconnecting to tmux.")
+}
+
+func writeRestoreFailure(out io.Writer, app string, err error) {
+	fmt.Fprintf(out, "Restore failed: %v\n", err)
+	fmt.Fprintf(out, "Reconnect with: viberun %s\n", app)
+	fmt.Fprintf(out, "Or retry restore with: viberun %s restore latest\n", app)
+}
+
+func performRestore(containerName string, app string, port int, snapshotRef string, execDone <-chan error) error {
+	backupName, prepErr := prepareRestore(containerName)
+	if prepErr != nil {
+		return prepErr
+	}
+	if execDone != nil {
+		<-execDone
+	}
+	writeRestoreBanner(os.Stdout, snapshotRef)
+
+	restoreErr := runSnapshot(containerName, app, port, snapshotRef)
+	if restoreErr != nil {
+		if rollbackErr := rollbackRestore(containerName, backupName); rollbackErr != nil {
+			restoreErr = fmt.Errorf("restore failed: %v (rollback failed: %v)", restoreErr, rollbackErr)
+		}
+	} else if strings.TrimSpace(backupName) != "" {
+		_ = exec.Command("docker", "rm", "-f", backupName).Run()
+	}
+	return restoreErr
+}
+
+func runInteractiveSession(containerName string, app string, port int, agentArgs []string, env map[string]string, restores *restoreQueue) error {
+	for {
+		execDone := make(chan error, 1)
+		go func() {
+			execDone <- dockerExec(containerName, agentArgs, env)
+		}()
+
+		select {
+		case <-restores.ch:
+			snapshotRef := restores.Current()
+			restoreErr := performRestore(containerName, app, port, snapshotRef, execDone)
+			restores.Finish()
+			if restoreErr != nil {
+				writeRestoreFailure(os.Stderr, app, restoreErr)
+				return restoreErr
+			}
+			if err := waitForContainerRunning(containerName, 30*time.Second); err != nil {
+				writeRestoreFailure(os.Stderr, app, err)
+				return err
+			}
+			fmt.Fprintln(os.Stdout, "Reconnected.")
+			continue
+		case err := <-execDone:
+			if restores.Pending() {
+				select {
+				case <-restores.ch:
+				default:
+				}
+				snapshotRef := restores.Current()
+				restoreErr := performRestore(containerName, app, port, snapshotRef, nil)
+				restores.Finish()
+				if restoreErr != nil {
+					writeRestoreFailure(os.Stderr, app, restoreErr)
+					return restoreErr
+				}
+				if err := waitForContainerRunning(containerName, 30*time.Second); err != nil {
+					writeRestoreFailure(os.Stderr, app, err)
+					return err
+				}
+				fmt.Fprintln(os.Stdout, "Reconnected.")
+				continue
+			}
+			if err == nil {
+				return nil
+			}
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				return exitErr
+			}
+			return err
+		}
+	}
 }
 
 func dockerRunArgs(name string, app string, port int, image string) []string {

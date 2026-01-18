@@ -31,6 +31,9 @@ This AGENTS.md applies to the app working directory inside the container.
 - If host RPC is available, run `vrctl host snapshot` and report the ref.
 - Otherwise, ask the user to run `viberun <app> snapshot` locally.
 - Consider snapshots before large refactors, dependency upgrades, or data migrations.
+- To review snapshots inside the container, run `vrctl host snapshots` (shows version tags and timestamps).
+- To roll back, use `vrctl host restore latest` or `vrctl host restore vN`.
+- Restore will briefly detach from tmux and then reconnect once the container is back up.
 
 ## User experience
 - Keep instructions simple and action-oriented.

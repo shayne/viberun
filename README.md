@@ -234,11 +234,11 @@ Useful bootstrap overrides:
 
 ### Snapshots and restore
 
-Snapshots are Docker commits stored as images named `viberun-snapshot-<app>:<tag>`.
+Snapshots are Docker commits stored as images named `viberun-snapshot-<app>:vN` (auto-incremented versions).
 
-- `viberun <app> snapshot` creates a timestamped snapshot.
-- `viberun <app> snapshots` lists snapshots.
-- `viberun <app> restore <snapshot|latest>` restores from a snapshot.
+- `viberun <app> snapshot` creates the next `vN` snapshot.
+- `viberun <app> snapshots` lists versions with timestamps.
+- `viberun <app> restore <vN|latest>` restores from a snapshot (`latest` picks the highest `vN`).
 - `viberun <app> --delete -y` removes the container and snapshots.
 
 ### Host RPC bridge

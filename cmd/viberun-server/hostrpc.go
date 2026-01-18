@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -90,13 +91,16 @@ func ensureHostRPCDir(app string) error {
 	if err := os.MkdirAll(cfg.HostDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create host rpc dir: %w", err)
 	}
+	if err := os.Chmod(cfg.HostDir, 0o755); err != nil {
+		return fmt.Errorf("failed to set host rpc dir permissions: %w", err)
+	}
 	return nil
 }
 
 func startHostRPC(app string, containerName string, port int, snapshotFn func(containerName string, app string) (string, error), listFn func(app string) ([]string, error), restoreFn func(containerName string, app string, port int, snapshotRef string) error) (*hostRPCServer, map[string]string, error) {
 	cfg := hostRPCConfigForApp(app)
-	if err := os.MkdirAll(cfg.HostDir, 0o755); err != nil {
-		return nil, nil, fmt.Errorf("failed to create host rpc dir: %w", err)
+	if err := ensureHostRPCDir(app); err != nil {
+		return nil, nil, err
 	}
 	_ = os.Remove(cfg.HostSocket)
 	token, err := randomHostRPCToken()
@@ -239,16 +243,18 @@ func (s *hostRPCServer) handleRestore(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if err := s.restoreFn(s.containerName, s.app, s.port, resolved); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errRestoreInProgress) {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
 	_, _ = w.Write([]byte("ok\n"))
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 	}
-	go func(containerName string, app string, port int, snapshotRef string) {
-		time.Sleep(200 * time.Millisecond)
-		if err := s.restoreFn(containerName, app, port, snapshotRef); err != nil {
-			fmt.Fprintf(os.Stderr, "host rpc restore failed: %v\n", err)
-		}
-	}(s.containerName, s.app, s.port, resolved)
 }
 
 func (s *hostRPCServer) authorized(r *http.Request) bool {

@@ -369,7 +369,7 @@ host_restore() {
   command -v curl >/dev/null 2>&1 || die "curl is required for host restore"
   printf '%s' "$ref" | curl -fsS --unix-socket "$socket" -H "Authorization: Bearer $token" -X POST --data-binary @- http://localhost/restore >/dev/null
   app_name="${VIBERUN_APP:-app}"
-  echo "restore triggered for ${app_name}; this session will disconnect" >&2
+  echo "restore triggered for ${app_name}; reconnecting to the session" >&2
 }
 
 main() {
