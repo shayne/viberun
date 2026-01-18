@@ -9,12 +9,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 type Config struct {
-	DefaultHost   string            `json:"default_host"`
-	AgentProvider string            `json:"agent_provider"`
-	Hosts         map[string]string `json:"hosts"`
+	DefaultHost   string            `json:"default_host" toml:"default_host"`
+	AgentProvider string            `json:"agent_provider" toml:"agent_provider"`
+	Hosts         map[string]string `json:"hosts" toml:"hosts"`
 }
 
 func Load() (Config, string, error) {
@@ -22,32 +24,32 @@ func Load() (Config, string, error) {
 	if err != nil {
 		return Config{}, "", err
 	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return Config{Hosts: map[string]string{}}, path, nil
-		}
+	cfg, err := loadToml(path)
+	if err == nil {
+		return cfg, path, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
 		return Config{}, path, err
 	}
-
-	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return Config{}, path, err
+	legacyPath, legacyErr := legacyConfigPath()
+	if legacyErr != nil {
+		return Config{Hosts: map[string]string{}}, path, nil
 	}
-	if cfg.Hosts == nil {
-		cfg.Hosts = map[string]string{}
+	cfg, err = loadLegacyJSON(legacyPath)
+	if err == nil {
+		return cfg, path, nil
 	}
-
-	return cfg, path, nil
+	if errors.Is(err, os.ErrNotExist) {
+		return Config{Hosts: map[string]string{}}, path, nil
+	}
+	return Config{}, path, err
 }
 
 func Save(path string, cfg Config) error {
 	if cfg.Hosts == nil {
 		cfg.Hosts = map[string]string{}
 	}
-
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	data, err := toml.Marshal(cfg)
 	if err != nil {
 		return err
 	}
@@ -69,5 +71,47 @@ func configPath() (string, error) {
 		}
 	}
 
+	return filepath.Join(configHome, "viberun", "config.toml"), nil
+}
+
+func legacyConfigPath() (string, error) {
+	configHome := os.Getenv("XDG_CONFIG_HOME")
+	if configHome == "" {
+		var err error
+		configHome, err = os.UserConfigDir()
+		if err != nil {
+			return "", err
+		}
+	}
 	return filepath.Join(configHome, "viberun", "config.json"), nil
+}
+
+func loadToml(path string) (Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, err
+	}
+	var cfg Config
+	if err := toml.Unmarshal(data, &cfg); err != nil {
+		return Config{}, err
+	}
+	if cfg.Hosts == nil {
+		cfg.Hosts = map[string]string{}
+	}
+	return cfg, nil
+}
+
+func loadLegacyJSON(path string) (Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, err
+	}
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return Config{}, err
+	}
+	if cfg.Hosts == nil {
+		cfg.Hosts = map[string]string{}
+	}
+	return cfg, nil
 }

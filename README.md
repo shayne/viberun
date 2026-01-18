@@ -247,7 +247,7 @@ When you open a session, the server creates a Unix socket on the host and mounts
 
 ### Configuration and state
 
-Local config lives at `~/.config/viberun/config.json` (or `$XDG_CONFIG_HOME/viberun/config.json`) and stores:
+Local config lives at `~/.config/viberun/config.toml` (or `$XDG_CONFIG_HOME/viberun/config.toml`) and stores:
 
 - `default_host`
 - `agent_provider`

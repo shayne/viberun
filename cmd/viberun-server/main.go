@@ -272,6 +272,15 @@ func main() {
 	if strings.TrimSpace(agentLabel) != "" {
 		extraEnv["VIBERUN_AGENT"] = agentLabel
 	}
+	if action == "" {
+		if err := checkCustomAgent(app, containerName, agentSpec, extraEnv); err != nil {
+			if hostRPC != nil {
+				_ = hostRPC.Close()
+			}
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
 	if err := dockerExec(containerName, agentArgs, extraEnv); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			os.Exit(exitErr.ExitCode())

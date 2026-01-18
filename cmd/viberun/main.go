@@ -10,7 +10,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -29,6 +28,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/pelletier/go-toml/v2"
 	"github.com/shayne/viberun/internal/agents"
 	"github.com/shayne/viberun/internal/config"
 	"github.com/shayne/viberun/internal/sshcmd"
@@ -255,7 +255,7 @@ func handleConfig(args []string) {
 }
 
 func showConfig(cfg config.Config, path string) {
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	data, err := toml.Marshal(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to format config: %v\n", err)
 		os.Exit(1)
@@ -570,12 +570,15 @@ func runApp(flags runFlags, args runArgs) error {
 	cmd := exec.Command("ssh", sshArgs...)
 	cmd.Env = normalizedSshEnv()
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	var outputTail tailBuffer
+	outputTail.max = 32 * 1024
+	cmd.Stdout = io.MultiWriter(os.Stdout, &outputTail)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &outputTail)
 
 	if err := cmd.Run(); err != nil {
 		cleanup()
 		if exitErr, ok := err.(*exec.ExitError); ok {
+			maybeClearDefaultAgentOnFailure(cfg, cfgPath, flags, resolved.App, outputTail.String())
 			os.Exit(exitErr.ExitCode())
 		}
 		return fmt.Errorf("failed to start ssh: %w", err)
@@ -586,6 +589,79 @@ func runApp(flags runFlags, args runArgs) error {
 func exitUsage(message string) {
 	fmt.Fprintln(os.Stderr, message)
 	os.Exit(2)
+}
+
+func maybeClearDefaultAgentOnFailure(cfg config.Config, cfgPath string, flags runFlags, app string, stderrOutput string) {
+	if strings.TrimSpace(flags.Agent) != "" {
+		return
+	}
+	runner, pkg, ok := customAgentParts(cfg.AgentProvider)
+	if !ok || strings.TrimSpace(pkg) == "" {
+		return
+	}
+	if !looksLikeCustomAgentFailure(stderrOutput) {
+		return
+	}
+	cfg.AgentProvider = ""
+	if err := config.Save(cfgPath, cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to clear default agent in %s: %v\n", cfgPath, err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "cleared default agent in %s so the next run prompts you to choose an agent\n", cfgPath)
+	if strings.TrimSpace(app) != "" {
+		fmt.Fprintf(os.Stderr, "test the agent locally: viberun %s shell, then run: %s %s --help\n", app, runner, pkg)
+	}
+	fmt.Fprintf(os.Stderr, "then retry with --agent %s:%s or set it as default with: viberun config --agent %s:%s\n", runner, pkg, runner, pkg)
+}
+
+func looksLikeCustomAgentFailure(output string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(output))
+	return strings.Contains(normalized, "custom agent") && strings.Contains(normalized, "failed to start inside the container")
+}
+
+func customAgentParts(provider string) (string, string, bool) {
+	normalized := strings.TrimSpace(provider)
+	lowered := strings.ToLower(normalized)
+	switch {
+	case strings.HasPrefix(lowered, "npx:"):
+		pkg := strings.TrimSpace(normalized[len("npx:"):])
+		return "npx", pkg, true
+	case strings.HasPrefix(lowered, "uvx:"):
+		pkg := strings.TrimSpace(normalized[len("uvx:"):])
+		return "uvx", pkg, true
+	default:
+		return "", "", false
+	}
+}
+
+type tailBuffer struct {
+	buf []byte
+	max int
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	if t.max <= 0 || len(p) == 0 {
+		return len(p), nil
+	}
+	if len(p) >= t.max {
+		t.buf = append(t.buf[:0], p[len(p)-t.max:]...)
+		return len(p), nil
+	}
+	if len(t.buf)+len(p) > t.max {
+		cut := len(t.buf) + len(p) - t.max
+		if cut < len(t.buf) {
+			t.buf = append(t.buf[cut:], p...)
+		} else {
+			t.buf = append(t.buf[:0], p...)
+		}
+		return len(p), nil
+	}
+	t.buf = append(t.buf, p...)
+	return len(p), nil
+}
+
+func (t *tailBuffer) String() string {
+	return string(t.buf)
 }
 
 func bootstrapScript() string {

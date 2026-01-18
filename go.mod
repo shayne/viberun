@@ -5,6 +5,7 @@ go 1.25.5
 require (
 	github.com/charmbracelet/huh v0.8.0
 	github.com/google/addlicense v1.2.0
+	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/shayne/yargs v1.0.1
 	github.com/tailscale/depaware v0.0.0-20251001183927-9c2ad255ef3f
 	golang.org/x/term v0.39.0
