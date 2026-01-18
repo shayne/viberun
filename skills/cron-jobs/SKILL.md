@@ -35,3 +35,11 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ## Verify
 - `vrctl service status cron`
 - `tail -n 200 /var/log/<app>-cron.log`
+
+## Language/tooling preferences
+- Prefer typed Python (type annotations) and use uv exclusively for env/deps and running (`uv init`, `uv add`, `uv run`); avoid pip/venv directly.
+- Or use Node with TypeScript only (.ts). The base image ships a recent Node (22+) so prefer native TypeScript execution with `node`. If that fails, run TS via `npx -y tsx` (still TypeScript).
+- Never use plain JavaScript unless the user explicitly asks for it.
+
+## User-facing notes
+- Keep explanations non-technical; only mention vrctl if the user explicitly asks how services are managed.

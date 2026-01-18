@@ -1,6 +1,6 @@
 # viberun
 
-`viberun` is a CLI-first, agent-native app host. You run `viberun <app>` locally and get dropped into an agent session inside a persistent Ubuntu container on a remote host (default agent: Codex). Containers keep their filesystem state between sessions and can run long-lived services via `vrctl`.
+`viberun` is a CLI-first, agent-native app host. You run `viberun <app>` locally and get dropped into an agent session inside a persistent Ubuntu container on a remote host (default agent: Codex). Containers keep their filesystem state between sessions and can run long-lived services.
 
 ## Quick start (end-to-end)
 
@@ -52,8 +52,6 @@ In the agent session, use a prompt like:
 Create a beautiful hello-world web app with a simple, tasteful landing page. Keep it running as a service so I can open it from my laptop.
 ```
 
-Use `vrctl service add` to keep the server running, and bind the server to `0.0.0.0` so the host port mapping works.
-
 ### 5) Open the app in your local browser
 
 While the session is active, `viberun` starts a localhost proxy to the host port. The agent will tell you the exact `http://localhost:<port>` URL to open.
@@ -62,7 +60,7 @@ While the session is active, `viberun` starts a localhost proxy to the host port
 
 - Client: `viberun` CLI on your machine.
 - Server: `viberun-server` on the host VM (runs via SSH).
-- Container: Ubuntu + s6 + agent tooling + built-in skills.
+- Container: Ubuntu + agent tooling + built-in skills.
 
 Flow: `viberun myapp` -> SSH -> server CLI -> Docker container -> agent session.
 

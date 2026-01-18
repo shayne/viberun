@@ -67,7 +67,7 @@ if [ -f "$dir/env" ]; then
   done < "$dir/env"
 fi
 cmd="\$(cat "$dir/command")"
-exec sh -lc "\$cmd" >>"$LOG_DIR/$name.log" 2>&1
+exec sh -c "\$cmd" >>"$LOG_DIR/$name.log" 2>&1
 EOF
   chmod +x "$run"
 }
@@ -75,14 +75,44 @@ EOF
 wait_for_supervise() {
   dir="$1"
   i=0
-  while [ "$i" -lt 50 ]; do
-    if [ -d "$dir/supervise" ]; then
+  while [ "$i" -lt 120 ]; do
+    if [ -p "$dir/supervise/ok" ] || [ -p "$dir/supervise/control" ] || [ -d "$dir/supervise" ]; then
       return 0
     fi
     sleep 0.1
     i=$((i + 1))
   done
   return 1
+}
+
+supervisor_running() {
+  if [ -r /proc/1/comm ]; then
+    comm="$(tr -d ' \n' </proc/1/comm)"
+    [ "$comm" = "s6-svscan" ] && return 0
+  fi
+  return 1
+}
+
+refresh_services() {
+  if command -v s6-svscanctl >/dev/null 2>&1; then
+    s6-svscanctl -a "$SERVICES_DIR" >/dev/null 2>&1 || true
+  fi
+}
+
+ensure_supervise_ready() {
+  dir="$1"
+  refresh_services
+  if wait_for_supervise "$dir"; then
+    return 0
+  fi
+  if supervisor_running; then
+    refresh_services
+    if wait_for_supervise "$dir"; then
+      return 0
+    fi
+    die "service manager not ready yet; try again in a moment"
+  fi
+  die "service manager is not running in this container; restart the app session"
 }
 
 service_add() {
@@ -94,7 +124,8 @@ service_add() {
   cmd=""
   cwd=""
   start="1"
-  env_lines=""
+  env_tmp=""
+  env_written="0"
   while [ $# -gt 0 ]; do
     case "$1" in
       --cmd)
@@ -110,7 +141,11 @@ service_add() {
       --env)
         [ $# -ge 2 ] || die "--env requires a value"
         validate_env "$2"
-        env_lines="${env_lines}${env_lines:+\n}$2"
+        if [ "$env_written" = "0" ]; then
+          env_tmp="$(mktemp)"
+          env_written="1"
+        fi
+        printf '%s\n' "$2" >>"$env_tmp"
         shift 2
         ;;
       --no-start)
@@ -136,17 +171,18 @@ service_add() {
   else
     rm -f "$dir/cwd"
   fi
-  if [ -n "$env_lines" ]; then
-    printf "%s\n" "$env_lines" >"$dir/env"
+  if [ "$env_written" = "1" ]; then
+    mv -f "$env_tmp" "$dir/env"
   else
     rm -f "$dir/env"
   fi
   write_run_script "$name"
   if [ "$start" = "1" ]; then
-    if ! wait_for_supervise "$dir"; then
-      echo "vrctl: warning: supervise dir not ready for $name; starting anyway" >&2
+    ensure_supervise_ready "$dir"
+    if ! s6-svc -u "$dir"; then
+      ensure_supervise_ready "$dir"
+      s6-svc -u "$dir"
     fi
-    s6-svc -u "$dir"
   fi
 }
 
@@ -155,6 +191,7 @@ service_start() {
   [ $# -eq 1 ] || usage
   dir="$(service_dir "$1")"
   [ -d "$dir" ] || die "service not found: $1"
+  ensure_supervise_ready "$dir"
   s6-svc -u "$dir"
 }
 
@@ -163,6 +200,7 @@ service_stop() {
   [ $# -eq 1 ] || usage
   dir="$(service_dir "$1")"
   [ -d "$dir" ] || die "service not found: $1"
+  ensure_supervise_ready "$dir"
   s6-svc -d "$dir"
 }
 
@@ -171,6 +209,7 @@ service_restart() {
   [ $# -eq 1 ] || usage
   dir="$(service_dir "$1")"
   [ -d "$dir" ] || die "service not found: $1"
+  ensure_supervise_ready "$dir"
   s6-svc -r "$dir"
 }
 
@@ -179,6 +218,7 @@ service_status() {
   [ $# -eq 1 ] || usage
   dir="$(service_dir "$1")"
   [ -d "$dir" ] || die "service not found: $1"
+  ensure_supervise_ready "$dir"
   s6-svstat "$dir"
 }
 

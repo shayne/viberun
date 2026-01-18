@@ -10,16 +10,24 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    gnupg \
     ncurses-bin \
     ncurses-term \
     s6 \
-    nodejs \
-    npm \
+    python3 \
+    python3-venv \
     sudo \
     tmux \
     tzdata \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+  && apt-get install -y --no-install-recommends nodejs \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_UNMANAGED_INSTALL="/usr/local/bin" UV_NO_MODIFY_PATH=1 sh
 
 RUN curl -fsSL https://starship.rs/install.sh | sh -s -- -y \
   && mkdir -p /root/.config

@@ -65,6 +65,20 @@ func BuildArgsWithLocalForward(host string, remoteArgs []string, tty bool, forwa
 	return BuildArgsWithForwards(host, remoteArgs, tty, forward, nil)
 }
 
+// BuildPortForwardArgs builds ssh args for a background local port forward only.
+func BuildPortForwardArgs(host string, forward *LocalForward) []string {
+	args := []string{"-T", "-N", "-o", "ExitOnForwardFailure=yes"}
+	if forward != nil {
+		remoteHost := strings.TrimSpace(forward.RemoteHost)
+		if remoteHost == "" {
+			remoteHost = "localhost"
+		}
+		args = append(args, "-L", fmt.Sprintf("%d:%s:%d", forward.LocalPort, remoteHost, forward.RemotePort))
+	}
+	args = append(args, host)
+	return args
+}
+
 // BuildArgsWithForwards builds the ssh argument list for a target host with optional forwards.
 func BuildArgsWithForwards(host string, remoteArgs []string, tty bool, forward *LocalForward, remoteSocket *RemoteSocketForward) []string {
 	args := []string{}

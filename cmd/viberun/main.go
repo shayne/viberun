@@ -23,6 +23,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/term"
@@ -496,6 +497,7 @@ func runApp(flags runFlags, args runArgs) error {
 	}
 	var openServer *http.Server
 	var remoteSocket *sshcmd.RemoteSocketForward
+	var forwardCmd *exec.Cmd
 	if interactive {
 		server, port, err := startOpenListener()
 		if err != nil {
@@ -511,7 +513,6 @@ func runApp(flags runFlags, args runArgs) error {
 		}
 	}
 	remoteArgs := sshcmd.RemoteArgs(resolved.App, agentProvider, actionArgs, extraEnv)
-	var forward *sshcmd.LocalForward
 	if interactive && !isLocalHost(resolved.Host) {
 		hostPort, err := resolveHostPort(resolved, agentProvider)
 		if err != nil {
@@ -520,14 +521,23 @@ func runApp(flags runFlags, args runArgs) error {
 		if err := ensureLocalPortAvailable(hostPort); err != nil {
 			return err
 		}
-		forward = &sshcmd.LocalForward{
+		forwardCmd, err = startLocalForward(resolved.Host, &sshcmd.LocalForward{
 			LocalPort:  hostPort,
 			RemoteHost: "localhost",
 			RemotePort: hostPort,
+		})
+		if err != nil {
+			if openServer != nil {
+				_ = openServer.Close()
+			}
+			return err
 		}
 	}
+	if forwardCmd != nil {
+		defer stopLocalForward(forwardCmd)
+	}
 
-	sshArgs := sshcmd.BuildArgsWithForwards(resolved.Host, remoteArgs, tty, forward, remoteSocket)
+	sshArgs := sshcmd.BuildArgsWithForwards(resolved.Host, remoteArgs, tty, nil, remoteSocket)
 	cmd := exec.Command("ssh", sshArgs...)
 	cmd.Env = normalizedSshEnv()
 	cmd.Stdin = os.Stdin
@@ -1119,6 +1129,43 @@ func uploadFileOverSSH(host string, localPath string, remotePath string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func startLocalForward(host string, forward *sshcmd.LocalForward) (*exec.Cmd, error) {
+	args := sshcmd.BuildPortForwardArgs(host, forward)
+	cmd := exec.Command("ssh", args...)
+	cmd.Env = normalizedSshEnv()
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start port forward: %w", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+		waitErr := cmd.Wait()
+		if waitErr != nil {
+			return nil, fmt.Errorf("port forward failed: %w", waitErr)
+		}
+		return nil, fmt.Errorf("port forward exited unexpectedly")
+	}
+	return cmd, nil
+}
+
+func stopLocalForward(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	_ = cmd.Process.Signal(syscall.SIGTERM)
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	select {
+	case <-done:
+	case <-time.After(750 * time.Millisecond):
+		_ = cmd.Process.Kill()
+		<-done
+	}
 }
 
 func normalizedSshEnv() []string {
