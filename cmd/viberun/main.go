@@ -462,6 +462,10 @@ func runApp(flags runFlags, args runArgs) error {
 
 	resolved, err := target.Resolve(targetArg, cfg)
 	if err != nil {
+		if errors.Is(err, target.ErrNoHostConfigured) {
+			printMissingHostMessage()
+			os.Exit(2)
+		}
 		exitUsage(fmt.Sprintf("invalid target: %v", err))
 	}
 
@@ -589,6 +593,18 @@ func runApp(flags runFlags, args runArgs) error {
 func exitUsage(message string) {
 	fmt.Fprintln(os.Stderr, message)
 	os.Exit(2)
+}
+
+func printMissingHostMessage() {
+	fmt.Fprintln(os.Stderr, "No host is configured yet, so viberun does not know where to run your app.")
+	fmt.Fprintln(os.Stderr, "Please run bootstrap against a host first:")
+	fmt.Fprintln(os.Stderr, "  viberun bootstrap <host>   (example: viberun bootstrap user@your-host)")
+	fmt.Fprintln(os.Stderr, "Then retry with:")
+	fmt.Fprintln(os.Stderr, "  viberun <app>")
+	fmt.Fprintln(os.Stderr, "Or run once with an explicit host:")
+	fmt.Fprintln(os.Stderr, "  viberun <app>@<host>")
+	fmt.Fprintln(os.Stderr, "To set a default host for future runs:")
+	fmt.Fprintln(os.Stderr, "  viberun config --host <host>")
 }
 
 func maybeClearDefaultAgentOnFailure(cfg config.Config, cfgPath string, flags runFlags, app string, stderrOutput string) {

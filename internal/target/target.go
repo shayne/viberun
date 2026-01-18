@@ -5,11 +5,14 @@
 package target
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/shayne/viberun/internal/config"
 )
+
+var ErrNoHostConfigured = errors.New("no host provided and no default host configured")
 
 type Resolved struct {
 	App       string
@@ -37,7 +40,7 @@ func Resolve(raw string, cfg config.Config) (Resolved, error) {
 	if host == "" {
 		host = strings.TrimSpace(cfg.DefaultHost)
 		if host == "" {
-			return Resolved{}, fmt.Errorf("no host provided and no default host configured")
+			return Resolved{}, fmt.Errorf("%w", ErrNoHostConfigured)
 		}
 	}
 
@@ -51,7 +54,7 @@ func ResolveHost(raw string, cfg config.Config) (ResolvedHost, error) {
 	if host == "" {
 		host = strings.TrimSpace(cfg.DefaultHost)
 		if host == "" {
-			return ResolvedHost{}, fmt.Errorf("no host provided and no default host configured")
+			return ResolvedHost{}, fmt.Errorf("%w", ErrNoHostConfigured)
 		}
 	}
 
