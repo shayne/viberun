@@ -86,3 +86,73 @@ func TestDiscoverGeminiAuth(t *testing.T) {
 		t.Fatalf("expected details for gemini auth")
 	}
 }
+
+func TestDiscoverAmpAuth(t *testing.T) {
+	dir := t.TempDir()
+	ampDir := filepath.Join(dir, "amp")
+	if err := os.MkdirAll(ampDir, 0o700); err != nil {
+		t.Fatalf("mkdir amp: %v", err)
+	}
+	authPath := filepath.Join(ampDir, "secrets.json")
+	if err := os.WriteFile(authPath, []byte(`{"token":"amp"}`), 0o600); err != nil {
+		t.Fatalf("write amp auth: %v", err)
+	}
+	t.Setenv("XDG_DATA_HOME", dir)
+	t.Setenv("AMP_API_KEY", "amp-secret")
+
+	auth, details, err := discoverLocalAuth("ampcode")
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if auth == nil || auth.Provider != "ampcode" {
+		t.Fatalf("expected ampcode auth bundle")
+	}
+	if auth.Env["AMP_API_KEY"] != "amp-secret" {
+		t.Fatalf("expected AMP_API_KEY in bundle")
+	}
+	if len(auth.Files) != 1 {
+		t.Fatalf("expected amp secrets file")
+	}
+	if auth.Files[0].LocalPath != authPath {
+		t.Fatalf("unexpected local path: %s", auth.Files[0].LocalPath)
+	}
+	if auth.Files[0].ContainerPath != "/root/.local/share/amp/secrets.json" {
+		t.Fatalf("unexpected container path: %s", auth.Files[0].ContainerPath)
+	}
+	if len(details) != 2 {
+		t.Fatalf("expected details for amp auth")
+	}
+}
+
+func TestDiscoverOpenCodeAuth(t *testing.T) {
+	dir := t.TempDir()
+	openDir := filepath.Join(dir, "opencode")
+	if err := os.MkdirAll(openDir, 0o700); err != nil {
+		t.Fatalf("mkdir opencode: %v", err)
+	}
+	authPath := filepath.Join(openDir, "auth.json")
+	if err := os.WriteFile(authPath, []byte(`{"token":"open"}`), 0o600); err != nil {
+		t.Fatalf("write opencode auth: %v", err)
+	}
+	t.Setenv("XDG_DATA_HOME", dir)
+
+	auth, details, err := discoverLocalAuth("opencode")
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if auth == nil || auth.Provider != "opencode" {
+		t.Fatalf("expected opencode auth bundle")
+	}
+	if len(auth.Files) != 1 {
+		t.Fatalf("expected opencode auth file")
+	}
+	if auth.Files[0].LocalPath != authPath {
+		t.Fatalf("unexpected local path: %s", auth.Files[0].LocalPath)
+	}
+	if auth.Files[0].ContainerPath != "/root/.local/share/opencode/auth.json" {
+		t.Fatalf("unexpected container path: %s", auth.Files[0].ContainerPath)
+	}
+	if len(details) != 1 {
+		t.Fatalf("expected details for opencode auth")
+	}
+}

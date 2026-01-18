@@ -7,7 +7,7 @@ package main
 import "testing"
 
 func TestTmuxSessionArgsUsesDefaults(t *testing.T) {
-	args := tmuxSessionArgs("", nil)
+	args := tmuxSessionArgs("", "", nil)
 	if len(args) < 6 {
 		t.Fatalf("expected tmux args, got %v", args)
 	}
@@ -24,15 +24,18 @@ func TestTmuxSessionArgsUsesDefaults(t *testing.T) {
 
 func TestTmuxSessionArgsKeepsCommand(t *testing.T) {
 	command := []string{"codex", "--help"}
-	args := tmuxSessionArgs("viberun-agent", command)
+	args := tmuxSessionArgs("viberun-agent", "codex", command)
 	if args[0] != "tmux" || args[1] != "new-session" {
 		t.Fatalf("unexpected tmux prefix: %v", args[:2])
 	}
 	if args[4] != "viberun-agent" {
 		t.Fatalf("expected session name, got %q", args[4])
 	}
-	if args[5] != "codex" || args[6] != "--help" {
-		t.Fatalf("unexpected command args: %v", args[5:])
+	if args[5] != "-n" || args[6] != "codex" {
+		t.Fatalf("expected window name args, got %v", args[5:7])
+	}
+	if args[7] != "codex" || args[8] != "--help" {
+		t.Fatalf("unexpected command args: %v", args[7:])
 	}
 }
 

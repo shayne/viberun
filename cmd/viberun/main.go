@@ -28,6 +28,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/shayne/viberun/internal/agents"
 	"github.com/shayne/viberun/internal/config"
 	"github.com/shayne/viberun/internal/sshcmd"
 	"github.com/shayne/viberun/internal/target"
@@ -59,7 +60,7 @@ func runCLI() error {
 }
 
 type runFlags struct {
-	Agent  string `flag:"agent" help:"agent provider to run (codex, claude, gemini)"`
+	Agent  string `flag:"agent" help:"agent provider to run (codex, claude, gemini, ampcode, opencode, or npx:<pkg>/uvx:<pkg>)"`
 	Delete bool   `flag:"delete" help:"delete the app and snapshots"`
 	Yes    bool   `flag:"yes" short:"y" help:"skip confirmation prompts"`
 }
@@ -437,9 +438,25 @@ func runApp(flags runFlags, args runArgs) error {
 		actionArgs = []string{"delete"}
 	}
 
-	cfg, _, err := config.Load()
+	interactive := len(actionArgs) == 0 || (len(actionArgs) == 1 && actionArgs[0] == "shell")
+	tty := interactive && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+
+	cfg, cfgPath, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if strings.TrimSpace(flags.Agent) == "" && strings.TrimSpace(cfg.AgentProvider) == "" && tty {
+		selection, err := tui.SelectDefaultAgent(os.Stdin, os.Stdout)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(selection) != "" {
+			cfg.AgentProvider = selection
+			if err := config.Save(cfgPath, cfg); err != nil {
+				return fmt.Errorf("failed to save config: %w", err)
+			}
+		}
 	}
 
 	resolved, err := target.Resolve(targetArg, cfg)
@@ -453,13 +470,16 @@ func runApp(flags runFlags, args runArgs) error {
 
 	agentProvider := cfg.AgentProvider
 	if strings.TrimSpace(agentProvider) == "" {
-		agentProvider = "codex"
+		agentProvider = agents.DefaultProvider()
 	}
 	if strings.TrimSpace(flags.Agent) != "" {
 		agentProvider = strings.TrimSpace(flags.Agent)
 	}
-	interactive := len(actionArgs) == 0 || (len(actionArgs) == 1 && actionArgs[0] == "shell")
-	tty := interactive && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+	agentSpec, err := agents.Resolve(agentProvider)
+	if err != nil {
+		return err
+	}
+	agentProvider = agentSpec.Provider
 	if interactive && !tty {
 		return fmt.Errorf("interactive sessions require a TTY; run from a terminal or use snapshot/restore commands")
 	}
@@ -480,10 +500,10 @@ func runApp(flags runFlags, args runArgs) error {
 				os.Exit(1)
 			}
 			extraEnv["VIBERUN_AUTO_CREATE"] = "1"
-			localAuth, details, err := discoverLocalAuth(agentProvider)
+			localAuth, details, err := discoverLocalAuth(agentSpec.ID)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "auth discovery failed: %v\n", err)
-			} else if localAuth != nil && promptCopyAuth(resolved.App, agentProvider, details) {
+			} else if localAuth != nil && promptCopyAuth(resolved.App, agentSpec.Label, details) {
 				bundle, err := stageAuthBundle(resolved.Host, localAuth)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "failed to stage auth: %v\n", err)

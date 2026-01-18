@@ -46,10 +46,14 @@ func applyAuthBundle(container string, bundle *authbundle.Bundle) error {
 	switch strings.ToLower(strings.TrimSpace(bundle.Provider)) {
 	case "", "codex":
 		return applyCodexAuth(container, bundle)
+	case "amp", "ampcode":
+		return applyCodexAuth(container, bundle)
 	case "claude", "claude-code":
 		return applyClaudeAuth(container, bundle)
 	case "gemini":
 		return applyGeminiAuth(container, bundle)
+	case "opencode":
+		return applyCodexAuth(container, bundle)
 	default:
 		return nil
 	}

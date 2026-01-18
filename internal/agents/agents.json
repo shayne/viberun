@@ -1,0 +1,63 @@
+{
+  "agents": [
+    {
+      "id": "codex",
+      "label": "codex",
+      "description": "OpenAI Codex",
+      "command": [
+        "npx",
+        "-y",
+        "@openai/codex@latest",
+        "--dangerously-bypass-approvals-and-sandbox"
+      ]
+    },
+    {
+      "id": "claude",
+      "label": "claude",
+      "description": "Anthropic Claude Code",
+      "aliases": [
+        "claude-code"
+      ],
+      "command": [
+        "npx",
+        "-y",
+        "@anthropic-ai/claude-code@latest",
+        "--dangerously-skip-permissions"
+      ]
+    },
+    {
+      "id": "gemini",
+      "label": "gemini",
+      "description": "Google Gemini CLI",
+      "command": [
+        "npx",
+        "-y",
+        "@google/gemini-cli@latest",
+        "--approval-mode=yolo"
+      ]
+    },
+    {
+      "id": "ampcode",
+      "label": "ampcode",
+      "description": "Sourcegraph Amp",
+      "aliases": [
+        "amp"
+      ],
+      "command": [
+        "npx",
+        "-y",
+        "@sourcegraph/amp@latest"
+      ]
+    },
+    {
+      "id": "opencode",
+      "label": "opencode",
+      "description": "OpenCode",
+      "command": [
+        "npx",
+        "-y",
+        "opencode-ai@latest"
+      ]
+    }
+  ]
+}

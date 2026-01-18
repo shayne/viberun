@@ -18,6 +18,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/shayne/viberun/internal/agents"
 	"github.com/shayne/viberun/internal/server"
 	"github.com/shayne/yargs"
 )
@@ -25,7 +26,7 @@ import (
 const defaultImage = "viberun:latest"
 
 type serverFlags struct {
-	Agent string `flag:"agent" help:"agent provider to run (codex, claude, gemini)"`
+	Agent string `flag:"agent" help:"agent provider to run (codex, claude, gemini, ampcode, opencode, or npx:<pkg>/uvx:<pkg>)"`
 }
 
 func main() {
@@ -58,20 +59,20 @@ func main() {
 	}
 
 	agentProvider := strings.TrimSpace(result.Flags.Agent)
-	if agentProvider == "" {
-		agentProvider = "codex"
-	}
-	agentArgs, err := agentCommand(agentProvider)
+	agentSpec, err := agents.Resolve(agentProvider)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid agent provider: %v\n", err)
 		os.Exit(2)
 	}
+	agentArgs := agentSpec.Command
+	agentLabel := agentSpec.Label
 	sessionName := "viberun-agent"
 	if action == "shell" {
 		agentArgs = []string{"/bin/bash"}
+		agentLabel = "shell"
 		sessionName = "viberun-shell"
 	}
-	agentArgs = tmuxSessionArgs(sessionName, agentArgs)
+	agentArgs = tmuxSessionArgs(sessionName, agentLabel, agentArgs)
 
 	if _, err := exec.LookPath("docker"); err != nil {
 		fmt.Fprintln(os.Stderr, "docker is required but was not found in PATH")
@@ -239,10 +240,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "failed to load auth bundle: %v\n", err)
 		os.Exit(1)
 	}
+	var bundleEnv map[string]string
 	if !exists && authBundle != nil {
 		if err := applyAuthBundle(containerName, authBundle); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to apply auth bundle: %v\n", err)
 			os.Exit(1)
+		}
+		if len(authBundle.Env) > 0 {
+			bundleEnv = authBundle.Env
 		}
 	}
 
@@ -255,6 +260,12 @@ func main() {
 			fmt.Fprintf(os.Stderr, "failed to start host rpc: %v\n", err)
 			os.Exit(1)
 		}
+	}
+	for key, value := range bundleEnv {
+		extraEnv[key] = value
+	}
+	if strings.TrimSpace(agentLabel) != "" {
+		extraEnv["VIBERUN_AGENT"] = agentLabel
 	}
 	if err := dockerExec(containerName, agentArgs, extraEnv); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -744,21 +755,7 @@ func dockerRunArgs(name string, app string, port int, image string) []string {
 	return args
 }
 
-func agentCommand(provider string) ([]string, error) {
-	normalized := strings.ToLower(strings.TrimSpace(provider))
-	switch normalized {
-	case "", "codex":
-		return []string{"codex"}, nil
-	case "claude", "claude-code":
-		return []string{"claude"}, nil
-	case "gemini":
-		return []string{"gemini"}, nil
-	default:
-		return nil, fmt.Errorf("unsupported provider %q", provider)
-	}
-}
-
-func tmuxSessionArgs(session string, command []string) []string {
+func tmuxSessionArgs(session string, windowName string, command []string) []string {
 	if strings.TrimSpace(session) == "" {
 		session = "viberun-session"
 	}
@@ -766,6 +763,9 @@ func tmuxSessionArgs(session string, command []string) []string {
 		command = []string{"/bin/bash"}
 	}
 	args := []string{"tmux", "new-session", "-A", "-s", session}
+	if strings.TrimSpace(windowName) != "" {
+		args = append(args, "-n", windowName)
+	}
 	return append(args, command...)
 }
 

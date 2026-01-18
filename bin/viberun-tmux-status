@@ -3,15 +3,16 @@ set -eu
 
 mode="${1:-}"
 app="${VIBERUN_APP:-}"
+agent="${VIBERUN_AGENT:-}"
 port="${VIBERUN_HOST_PORT:-}"
 
 case "$mode" in
   left)
+    label="viberun"
     if [ -n "$app" ]; then
-      printf "viberun %s" "$app"
-    else
-      printf "viberun"
+      label="$label $app"
     fi
+    printf "%s" "$label"
     ;;
   right)
     if [ -z "$port" ]; then

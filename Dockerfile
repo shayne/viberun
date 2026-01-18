@@ -33,28 +33,11 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_UNMANAGED_INSTALL="/usr/
 RUN curl -fsSL https://starship.rs/install.sh | sh -s -- -y \
   && mkdir -p /root/.config
 
+COPY internal/agents/agents.json /etc/viberun/agents.json
+COPY bin/viberun-agent-shims /usr/local/bin/viberun-agent-shims
+RUN /usr/local/bin/viberun-agent-shims /etc/viberun/agents.json /usr/local/bin
+
 RUN set -eux; \
-  printf '%s\n' \
-    '#!/bin/sh' \
-    'if [ -n "${VIBERUN_AGENT_CHECK:-}" ]; then' \
-    '  exec sh -c "$VIBERUN_AGENT_CHECK"' \
-    'fi' \
-    'exec npx -y @openai/codex@latest --dangerously-bypass-approvals-and-sandbox "$@"' \
-    > /usr/local/bin/codex; \
-  printf '%s\n' \
-    '#!/bin/sh' \
-    'if [ -n "${VIBERUN_AGENT_CHECK:-}" ]; then' \
-    '  exec sh -c "$VIBERUN_AGENT_CHECK"' \
-    'fi' \
-    'exec npx -y @anthropic-ai/claude-code@latest --dangerously-skip-permissions "$@"' \
-    > /usr/local/bin/claude; \
-  printf '%s\n' \
-    '#!/bin/sh' \
-    'if [ -n "${VIBERUN_AGENT_CHECK:-}" ]; then' \
-    '  exec sh -c "$VIBERUN_AGENT_CHECK"' \
-    'fi' \
-    'exec npx -y @google/gemini-cli@latest --approval-mode=yolo "$@"' \
-    > /usr/local/bin/gemini; \
   printf '%s\n' \
     '#!/bin/sh' \
     'set -e' \
@@ -77,7 +60,7 @@ RUN set -eux; \
     '#!/bin/sh' \
     "printf 'viberun-agent-check ok\\\\n'" \
     > /usr/local/bin/viberun-agent-check; \
-  chmod +x /usr/local/bin/codex /usr/local/bin/claude /usr/local/bin/gemini /usr/local/bin/xdg-open /usr/local/bin/viberun-agent-check
+  chmod +x /usr/local/bin/xdg-open /usr/local/bin/viberun-agent-check
 
 COPY config/terminfo/ghostty-terminfo /tmp/ghostty-terminfo
 RUN tic -x /tmp/ghostty-terminfo \

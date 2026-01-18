@@ -1,0 +1,53 @@
+#!/bin/sh
+set -eu
+
+catalog="${1:-}"
+dest="${2:-/usr/local/bin}"
+
+if [ -z "$catalog" ]; then
+  echo "usage: viberun-agent-shims <agents.json> [dest-dir]" >&2
+  exit 2
+fi
+
+python3 - <<'PY' "$catalog" "$dest"
+import json
+import os
+import shlex
+import sys
+
+catalog_path = sys.argv[1]
+dest_dir = sys.argv[2]
+
+with open(catalog_path, 'r', encoding='utf-8') as f:
+    catalog = json.load(f)
+
+agents = catalog.get('agents', [])
+if not agents:
+    raise SystemExit('no agents found in catalog')
+
+os.makedirs(dest_dir, exist_ok=True)
+
+for agent in agents:
+    agent_id = (agent.get('id') or '').strip()
+    if not agent_id:
+        raise SystemExit('agent id is required')
+    cmd = agent.get('command')
+    if not cmd:
+        raise SystemExit(f'agent {agent_id} command is required')
+    if isinstance(cmd, str):
+        parts = shlex.split(cmd)
+    else:
+        parts = [str(p) for p in cmd]
+    quoted = ' '.join(shlex.quote(p) for p in parts)
+    script = (
+        '#!/bin/sh\n'
+        'if [ -n "${VIBERUN_AGENT_CHECK:-}" ]; then\n'
+        '  exec sh -c "$VIBERUN_AGENT_CHECK"\n'
+        'fi\n'
+        f'exec {quoted} "$@"\n'
+    )
+    path = os.path.join(dest_dir, agent_id)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(script)
+    os.chmod(path, 0o755)
+PY

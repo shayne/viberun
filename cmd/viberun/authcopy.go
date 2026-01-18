@@ -40,6 +40,10 @@ func discoverLocalAuth(provider string) (*localAuth, []string, error) {
 		return discoverClaudeAuth()
 	case "gemini":
 		return discoverGeminiAuth()
+	case "amp", "ampcode":
+		return discoverAmpAuth()
+	case "opencode":
+		return discoverOpenCodeAuth()
 	default:
 		return nil, nil, nil
 	}
@@ -129,6 +133,72 @@ func discoverGeminiAuth() (*localAuth, []string, error) {
 		Files:    files,
 	}
 	return auth, details, nil
+}
+
+func discoverAmpAuth() (*localAuth, []string, error) {
+	env := map[string]string{}
+	details := []string{}
+	if value := strings.TrimSpace(os.Getenv("AMP_API_KEY")); value != "" {
+		env["AMP_API_KEY"] = value
+		details = append(details, "AMP_API_KEY (env)")
+	}
+	dataHome, err := userXdgDataHome()
+	if err != nil {
+		return nil, nil, err
+	}
+	authPath := filepath.Join(dataHome, "amp", "secrets.json")
+	files := []localAuthFile{}
+	if info, err := os.Stat(authPath); err == nil && info.Mode().IsRegular() {
+		files = append(files, localAuthFile{
+			LocalPath:     authPath,
+			ContainerPath: "/root/.local/share/amp/secrets.json",
+			Mode:          0o600,
+		})
+		details = append(details, authPath)
+	}
+	if len(env) == 0 && len(files) == 0 {
+		return nil, nil, nil
+	}
+	return &localAuth{
+		Provider: "ampcode",
+		Env:      env,
+		Files:    files,
+	}, details, nil
+}
+
+func discoverOpenCodeAuth() (*localAuth, []string, error) {
+	dataHome, err := userXdgDataHome()
+	if err != nil {
+		return nil, nil, err
+	}
+	authPath := filepath.Join(dataHome, "opencode", "auth.json")
+	info, err := os.Stat(authPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, nil, nil
+	}
+	auth := &localAuth{
+		Provider: "opencode",
+		Files: []localAuthFile{
+			{
+				LocalPath:     authPath,
+				ContainerPath: "/root/.local/share/opencode/auth.json",
+				Mode:          0o600,
+			},
+		},
+	}
+	details := []string{authPath}
+	return auth, details, nil
+}
+
+func userXdgDataHome() (string, error) {
+	if value := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); value != "" {
+		return value, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".local", "share"), nil
 }
 
 func promptCopyAuth(app string, provider string, details []string) bool {
