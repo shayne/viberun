@@ -19,12 +19,15 @@ RUN apt-get update \
     lsof \
     ncurses-bin \
     ncurses-term \
+    nano \
+    ripgrep \
     s6 \
     python3 \
     python3-venv \
     sudo \
     tmux \
     tzdata \
+    vim \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
