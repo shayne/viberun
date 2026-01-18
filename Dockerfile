@@ -1,8 +1,11 @@
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV CODEX_HOME=/root/.codex
-ENV VIBERUN_APP_DIR=/app
+ENV VIBERUN_USER=viberun
+ENV VIBERUN_HOME=/home/viberun
+ENV HOME=/home/viberun
+ENV CODEX_HOME=/home/viberun/.codex
+ENV VIBERUN_APP_DIR=/home/viberun/app
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 ENV LC_CTYPE=C.UTF-8
@@ -23,6 +26,8 @@ RUN apt-get update \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
+RUN useradd -m -d ${VIBERUN_HOME} -s /bin/bash ${VIBERUN_USER}
+
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
   && apt-get install -y --no-install-recommends nodejs \
   && apt-get clean \
@@ -31,7 +36,13 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_UNMANAGED_INSTALL="/usr/local/bin" UV_NO_MODIFY_PATH=1 sh
 
 RUN curl -fsSL https://starship.rs/install.sh | sh -s -- -y \
-  && mkdir -p /root/.config
+  && mkdir -p ${VIBERUN_HOME}/.config
+
+RUN printf '%s\n' \
+  'Defaults:viberun !authenticate' \
+  'viberun ALL=(root) NOPASSWD: /usr/bin/apt *, /usr/bin/apt-get *' \
+  > /etc/sudoers.d/viberun \
+  && chmod 0440 /etc/sudoers.d/viberun
 
 COPY internal/agents/agents.json /etc/viberun/agents.json
 COPY bin/viberun-agent-shims /usr/local/bin/viberun-agent-shims
@@ -69,7 +80,7 @@ RUN tic -x /tmp/ghostty-terminfo \
 COPY bin/viberun-tmux-status /usr/local/bin/viberun-tmux-status
 COPY bin/vrctl /usr/local/bin/vrctl
 COPY config/tmux.conf /etc/tmux.conf
-COPY config/starship.toml /root/.config/starship.toml
+COPY config/starship.toml /home/viberun/.config/starship.toml
 COPY config/bashrc-viberun.sh /etc/profile.d/viberun.sh
 RUN chmod +x /usr/local/bin/viberun-tmux-status \
   && chmod +x /usr/local/bin/vrctl \
@@ -86,8 +97,11 @@ RUN mkdir -p ${CODEX_HOME} \
     'shell_snapshot = true' \
     'steer = true' \
     > ${CODEX_HOME}/config.toml
-RUN mkdir -p /etc/services.d /var/log/vrctl
+RUN mkdir -p ${VIBERUN_HOME}/.local/services ${VIBERUN_HOME}/.local/logs ${VIBERUN_APP_DIR} \
+  && chown -R ${VIBERUN_USER}:${VIBERUN_USER} ${VIBERUN_HOME}
 
-WORKDIR /app
+USER ${VIBERUN_USER}
 
-CMD ["/usr/bin/s6-svscan", "/etc/services.d"]
+WORKDIR /home/viberun/app
+
+CMD ["/usr/bin/s6-svscan", "/home/viberun/.local/services"]

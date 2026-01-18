@@ -21,7 +21,7 @@ Purpose: help run a long-lived background process under vrctl.
 ```
 vrctl service add <name> \
   --cmd "<command>" \
-  --cwd /app
+  --cwd /home/viberun/app
 ```
 
 ## Common checks

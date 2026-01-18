@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	claudeSettingsPath = "/root/.claude/settings.json"
-	geminiEnvPath      = "/root/.env"
+	claudeSettingsPath = "/home/viberun/.claude/settings.json"
+	geminiEnvPath      = "/home/viberun/.env"
 )
 
 func loadAuthBundleFromEnv() (*authbundle.Bundle, error) {
@@ -198,13 +198,27 @@ func copyHostFileToContainer(container string, file authbundle.File) error {
 	if err := exec.Command("docker", "cp", file.HostPath, fmt.Sprintf("%s:%s", container, file.ContainerPath)).Run(); err != nil {
 		return fmt.Errorf("failed to copy auth file: %v", err)
 	}
+	user := containerUser()
+	if user != "" && user != "root" {
+		if err := exec.Command("docker", "exec", "--user", "root", container, "chown", fmt.Sprintf("%s:%s", user, user), file.ContainerPath).Run(); err != nil {
+			return fmt.Errorf("failed to chown %s: %v", file.ContainerPath, err)
+		}
+	}
 	if file.Mode != 0 {
-		if err := exec.Command("docker", "exec", container, "chmod", fmt.Sprintf("%#o", file.Mode), file.ContainerPath).Run(); err != nil {
+		if err := exec.Command("docker", "exec", "--user", "root", container, "chmod", fmt.Sprintf("%#o", file.Mode), file.ContainerPath).Run(); err != nil {
 			return fmt.Errorf("failed to chmod %s: %v", file.ContainerPath, err)
 		}
 	}
 	_ = os.Remove(file.HostPath)
 	return nil
+}
+
+func containerUser() string {
+	user := strings.TrimSpace(os.Getenv("VIBERUN_CONTAINER_USER"))
+	if user == "" {
+		return "viberun"
+	}
+	return user
 }
 
 func shellQuote(value string) string {

@@ -31,7 +31,7 @@ func TestDiscoverCodexAuth(t *testing.T) {
 	if auth.Files[0].LocalPath != authPath {
 		t.Fatalf("unexpected local path: %s", auth.Files[0].LocalPath)
 	}
-	if auth.Files[0].ContainerPath != "/root/.codex/auth.json" {
+	if auth.Files[0].ContainerPath != "/home/viberun/.codex/auth.json" {
 		t.Fatalf("unexpected container path: %s", auth.Files[0].ContainerPath)
 	}
 	if len(details) != 1 {
@@ -76,7 +76,7 @@ func TestDiscoverGeminiAuth(t *testing.T) {
 	if auth.Env["GEMINI_API_KEY"] != "gem-secret" {
 		t.Fatalf("expected GEMINI_API_KEY in bundle")
 	}
-	if auth.Env["GOOGLE_APPLICATION_CREDENTIALS"] != "/root/.config/gcloud/application_default_credentials.json" {
+	if auth.Env["GOOGLE_APPLICATION_CREDENTIALS"] != "/home/viberun/.config/gcloud/application_default_credentials.json" {
 		t.Fatalf("unexpected credentials path: %s", auth.Env["GOOGLE_APPLICATION_CREDENTIALS"])
 	}
 	if len(auth.Files) != 1 {

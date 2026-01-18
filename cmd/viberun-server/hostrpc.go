@@ -87,7 +87,7 @@ func sanitizeHostRPCName(app string) string {
 
 func ensureHostRPCDir(app string) error {
 	cfg := hostRPCConfigForApp(app)
-	if err := os.MkdirAll(cfg.HostDir, 0o700); err != nil {
+	if err := os.MkdirAll(cfg.HostDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create host rpc dir: %w", err)
 	}
 	return nil
@@ -95,7 +95,7 @@ func ensureHostRPCDir(app string) error {
 
 func startHostRPC(app string, containerName string, port int, snapshotFn func(containerName string, app string) (string, error), listFn func(app string) ([]string, error), restoreFn func(containerName string, app string, port int, snapshotRef string) error) (*hostRPCServer, map[string]string, error) {
 	cfg := hostRPCConfigForApp(app)
-	if err := os.MkdirAll(cfg.HostDir, 0o700); err != nil {
+	if err := os.MkdirAll(cfg.HostDir, 0o755); err != nil {
 		return nil, nil, fmt.Errorf("failed to create host rpc dir: %w", err)
 	}
 	_ = os.Remove(cfg.HostSocket)
@@ -103,14 +103,14 @@ func startHostRPC(app string, containerName string, port int, snapshotFn func(co
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := os.WriteFile(cfg.HostTokenFile, []byte(token+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfg.HostTokenFile, []byte(token+"\n"), 0o644); err != nil {
 		return nil, nil, fmt.Errorf("failed to write host rpc token: %w", err)
 	}
 	listener, err := net.Listen("unix", cfg.HostSocket)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to listen on host rpc socket: %w", err)
 	}
-	if err := os.Chmod(cfg.HostSocket, 0o600); err != nil {
+	if err := os.Chmod(cfg.HostSocket, 0o666); err != nil {
 		_ = listener.Close()
 		return nil, nil, fmt.Errorf("failed to set host rpc socket permissions: %w", err)
 	}

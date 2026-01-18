@@ -518,6 +518,17 @@ func runApp(flags runFlags, args runArgs) error {
 	var openServer *http.Server
 	var remoteSocket *sshcmd.RemoteSocketForward
 	var forwardCmd *exec.Cmd
+	cleanup := func() {
+		if openServer != nil {
+			_ = openServer.Close()
+			openServer = nil
+		}
+		if forwardCmd != nil {
+			stopLocalForward(forwardCmd)
+			forwardCmd = nil
+		}
+	}
+	defer cleanup()
 	if interactive {
 		server, port, err := startOpenListener()
 		if err != nil {
@@ -547,14 +558,8 @@ func runApp(flags runFlags, args runArgs) error {
 			RemotePort: hostPort,
 		})
 		if err != nil {
-			if openServer != nil {
-				_ = openServer.Close()
-			}
 			return err
 		}
-	}
-	if forwardCmd != nil {
-		defer stopLocalForward(forwardCmd)
 	}
 
 	sshArgs := sshcmd.BuildArgsWithForwards(resolved.Host, remoteArgs, tty, nil, remoteSocket)
@@ -565,16 +570,11 @@ func runApp(flags runFlags, args runArgs) error {
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		if openServer != nil {
-			_ = openServer.Close()
-		}
+		cleanup()
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			os.Exit(exitErr.ExitCode())
 		}
 		return fmt.Errorf("failed to start ssh: %w", err)
-	}
-	if openServer != nil {
-		_ = openServer.Close()
 	}
 	return nil
 }

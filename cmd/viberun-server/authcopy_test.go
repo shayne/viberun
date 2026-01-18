@@ -39,7 +39,7 @@ func TestMergeDotEnv(t *testing.T) {
 	existing := "# comment\nGEMINI_API_KEY=old\nOTHER=keep\n"
 	merged := mergeDotEnv(existing, map[string]string{
 		"GEMINI_API_KEY":                 "new",
-		"GOOGLE_APPLICATION_CREDENTIALS": "/root/.config/gcloud/application_default_credentials.json",
+		"GOOGLE_APPLICATION_CREDENTIALS": "/home/viberun/.config/gcloud/application_default_credentials.json",
 	})
 	if !strings.Contains(merged, "GEMINI_API_KEY=new") {
 		t.Fatalf("expected GEMINI_API_KEY updated")
@@ -47,7 +47,7 @@ func TestMergeDotEnv(t *testing.T) {
 	if !strings.Contains(merged, "OTHER=keep") {
 		t.Fatalf("expected OTHER preserved")
 	}
-	if !strings.Contains(merged, "GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json") {
+	if !strings.Contains(merged, "GOOGLE_APPLICATION_CREDENTIALS=/home/viberun/.config/gcloud/application_default_credentials.json") {
 		t.Fatalf("expected credentials appended")
 	}
 }

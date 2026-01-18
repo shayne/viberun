@@ -1,5 +1,5 @@
 add_newline = false
-format = "$custom.viberun$directory$git_branch$git_status$character"
+format = "viberun $directory$character"
 
 [directory]
 truncation_length = 3
@@ -17,8 +17,3 @@ style = "yellow"
 [character]
 success_symbol = "> "
 error_symbol = "> "
-
-[custom.viberun]
-when = "test -n \"$VIBERUN_APP\""
-command = "printf \"vr:%s \" \"$VIBERUN_APP\""
-style = "bold cyan"

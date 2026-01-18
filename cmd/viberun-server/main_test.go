@@ -44,7 +44,7 @@ func TestDockerExecArgsIncludesEnv(t *testing.T) {
 		"COLORTERM": "truecolor",
 		"TERM":      "xterm-256color",
 	})
-	expected := []string{"exec", "-i", "-t", "-e", "COLORTERM=truecolor", "-e", "TERM=xterm-256color", "viberun-test", "codex"}
+	expected := []string{"exec", "-i", "-t", "--user", "viberun", "-e", "COLORTERM=truecolor", "-e", "TERM=xterm-256color", "viberun-test", "codex"}
 	if len(args) != len(expected) {
 		t.Fatalf("unexpected args length: got %v want %v", args, expected)
 	}
@@ -59,7 +59,7 @@ func TestDockerExecArgsWithoutTTY(t *testing.T) {
 	args := dockerExecArgs("viberun-test", []string{"bash"}, false, map[string]string{
 		"TERM": "xterm-256color",
 	})
-	expected := []string{"exec", "-i", "-e", "TERM=xterm-256color", "viberun-test", "bash"}
+	expected := []string{"exec", "-i", "--user", "viberun", "-e", "TERM=xterm-256color", "viberun-test", "bash"}
 	if len(args) != len(expected) {
 		t.Fatalf("unexpected args length: got %v want %v", args, expected)
 	}

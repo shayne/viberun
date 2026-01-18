@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-SERVICES_DIR="${VRCTL_SERVICES_DIR:-/etc/services.d}"
-LOG_DIR="${VRCTL_LOG_DIR:-/var/log/vrctl}"
+SERVICES_DIR="${VRCTL_SERVICES_DIR:-${HOME}/.local/services}"
+LOG_DIR="${VRCTL_LOG_DIR:-${HOME}/.local/logs}"
 
 usage() {
   cat <<'EOF' >&2

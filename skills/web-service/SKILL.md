@@ -13,7 +13,7 @@ Purpose: help set up a web app inside the container with a stable vrctl-managed 
 1) Identify the app command and working directory.
 2) If the user asks for a simple web app without specifics, pick a lightweight server and build a small, tasteful single-page HTML UI.
 3) Ensure the web server binds to `0.0.0.0` (not `127.0.0.1`) so host port mapping works.
-4) Register the service with `vrctl service add <app> --cmd "<start command>" --cwd /app --env PORT=8080 --env HOST=0.0.0.0`.
+4) Register the service with `vrctl service add <app> --cmd "<start command>" --cwd /home/viberun/app --env PORT=8080 --env HOST=0.0.0.0`.
 5) Wait briefly (1–2s), then verify with `vrctl service status <app>` and `vrctl service logs <app> -n 200`.
 6) Mention that vrctl keeps the service running on container restarts.
 
@@ -21,7 +21,7 @@ Purpose: help set up a web app inside the container with a stable vrctl-managed 
 ```
 vrctl service add <app> \
   --cmd "<start command>" \
-  --cwd /app \
+  --cwd /home/viberun/app \
   --env PORT=8080 \
   --env HOST=0.0.0.0
 ```
@@ -31,7 +31,7 @@ vrctl service add <app> \
 - `vrctl service logs <app> -n 200`
 
 ## Service setup checklist (do this in order)
-1) Ensure `/app` exists and contains the server entrypoint.
+1) Ensure `/home/viberun/app` exists and contains the server entrypoint.
 2) Use a foreground command (no daemonize/no nohup).
 3) Add the service once with `vrctl service add` (include `--cwd` + `--env PORT=8080 --env HOST=0.0.0.0`).
 4) If the service exists and you changed the command/cwd/env, remove then re-add. Otherwise use `vrctl service restart`.

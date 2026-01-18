@@ -516,6 +516,11 @@ func dockerExecArgs(name string, agentArgs []string, tty bool, env map[string]st
 	if tty {
 		args = append(args, "-t")
 	}
+	user := strings.TrimSpace(os.Getenv("VIBERUN_CONTAINER_USER"))
+	if user == "" {
+		user = "viberun"
+	}
+	args = append(args, "--user", user)
 	if len(env) > 0 {
 		keys := make([]string, 0, len(env))
 		for key := range env {
@@ -751,7 +756,7 @@ func dockerRunArgs(name string, app string, port int, image string) []string {
 			fmt.Sprintf("VIBERUN_XDG_OPEN_SOCKET=%s", socketPath),
 		)
 	}
-	args = append(args, image, "/usr/bin/s6-svscan", "/etc/services.d")
+	args = append(args, image, "/usr/bin/s6-svscan", "/home/viberun/.local/services")
 	return args
 }
 

@@ -68,7 +68,7 @@ func discoverCodexAuth() (*localAuth, []string, error) {
 		Files: []localAuthFile{
 			{
 				LocalPath:     authPath,
-				ContainerPath: "/root/.codex/auth.json",
+				ContainerPath: "/home/viberun/.codex/auth.json",
 				Mode:          0o600,
 			},
 		},
@@ -113,7 +113,7 @@ func discoverGeminiAuth() (*localAuth, []string, error) {
 	files := []localAuthFile{}
 	if value := strings.TrimSpace(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")); value != "" {
 		if info, err := os.Stat(value); err == nil && info.Mode().IsRegular() {
-			containerPath := "/root/.config/gcloud/application_default_credentials.json"
+			containerPath := "/home/viberun/.config/gcloud/application_default_credentials.json"
 			files = append(files, localAuthFile{
 				LocalPath:     value,
 				ContainerPath: containerPath,

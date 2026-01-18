@@ -29,7 +29,7 @@ SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # m h dom mon dow user command
-*/5 * * * * root /usr/bin/env bash -lc 'cd /app && ./scripts/job.sh' >> /var/log/<app>-cron.log 2>&1
+*/5 * * * * root /usr/bin/env bash -lc 'cd /home/viberun/app && ./scripts/job.sh' >> /var/log/<app>-cron.log 2>&1
 ```
 
 ## Verify
