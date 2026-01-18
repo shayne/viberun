@@ -5,6 +5,25 @@ mode="${1:-}"
 app="${VIBERUN_APP:-}"
 agent="${VIBERUN_AGENT:-}"
 port="${VIBERUN_HOST_PORT:-}"
+listen_port="${VIBERUN_WEB_PORT:-8080}"
+
+dot_on="●"
+dot_off="○"
+if [ "${VIBERUN_TMUX_ASCII:-}" = "1" ]; then
+  dot_on="O"
+  dot_off="o"
+fi
+
+color_reset="#[default]"
+color_dim="#[fg=colour245]"
+color_muted="#[fg=colour240]"
+color_green="#[fg=colour35]"
+color_sep="#[fg=colour238]"
+
+is_listening() {
+  ss_out="$(ss -ltn 2>/dev/null)" || return 2
+  printf "%s\n" "$ss_out" | grep -q ":${listen_port} "
+}
 
 case "$mode" in
   left)
@@ -16,19 +35,32 @@ case "$mode" in
     ;;
   right)
     if [ -z "$port" ]; then
-      printf "ctrl-\\ to detach"
+      printf "%sctrl-\\ to detach%s" "$color_dim" "$color_reset"
       exit 0
     fi
-    if command -v ss >/dev/null 2>&1; then
-      if ss -ltn 2>/dev/null | grep -q ":8080 "; then
-        printf "http://localhost:%s  ctrl-\\ to detach" "$port"
-      fi
-    elif command -v netstat >/dev/null 2>&1; then
-      if netstat -ltn 2>/dev/null | grep -q ":8080 "; then
-        printf "http://localhost:%s  ctrl-\\ to detach" "$port"
-      fi
+    if is_listening; then
+      printf "%s%s%s %shttp://localhost:%s%s %s|%s %sctrl-\\ to detach%s" \
+        "$color_green" "$dot_on" "$color_reset" \
+        "$color_green" "$port" "$color_reset" \
+        "$color_sep" "$color_reset" \
+        "$color_dim" "$color_reset"
     else
-      printf "http://localhost:%s  ctrl-\\ to detach" "$port"
+      case $? in
+        2)
+          printf "%s!%s %ssvc check err%s %s|%s %sctrl-\\ to detach%s" \
+            "$color_muted" "$color_reset" \
+            "$color_muted" "$color_reset" \
+            "$color_sep" "$color_reset" \
+            "$color_dim" "$color_reset"
+          ;;
+        *)
+      printf "%s%s%s %sno web svc%s %s|%s %sctrl-\\ to detach%s" \
+        "$color_muted" "$dot_off" "$color_reset" \
+        "$color_muted" "$color_reset" \
+        "$color_sep" "$color_reset" \
+        "$color_dim" "$color_reset"
+          ;;
+      esac
     fi
     ;;
 esac

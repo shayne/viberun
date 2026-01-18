@@ -16,6 +16,7 @@ RUN apt-get update \
     ca-certificates \
     curl \
     gnupg \
+    iproute2 \
     lsof \
     ncurses-bin \
     ncurses-term \
