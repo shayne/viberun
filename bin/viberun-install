@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+VIBERUN_INSTALL_DIR_DEFAULT=""
+if [ -n "${VIBERUN_INSTALL_DIR:-}" ]; then
+  VIBERUN_INSTALL_DIR_DEFAULT="$VIBERUN_INSTALL_DIR"
+elif [ -n "${XDG_BIN_HOME:-}" ]; then
+  VIBERUN_INSTALL_DIR_DEFAULT="$XDG_BIN_HOME"
+elif [ "$(id -u)" -eq 0 ]; then
+  VIBERUN_INSTALL_DIR_DEFAULT="/usr/local/bin"
+else
+  VIBERUN_INSTALL_DIR_DEFAULT="$HOME/.local/bin"
+fi
+
+VIBERUN_INSTALL_DIR="$VIBERUN_INSTALL_DIR_DEFAULT"
+VIBERUN_INSTALL_BIN="${VIBERUN_INSTALL_BIN:-viberun}"
+VIBERUN_REPO="${VIBERUN_REPO:-shayne/viberun}"
+VIBERUN_VERSION="${VIBERUN_VERSION:-latest}"
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+if ! need_cmd uname; then
+  echo "uname is required" >&2
+  exit 1
+fi
+
+os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+arch_raw="$(uname -m)"
+case "$arch_raw" in
+  x86_64|amd64)
+    arch="amd64"
+    ;;
+  arm64|aarch64)
+    arch="arm64"
+    ;;
+  *)
+    echo "unsupported architecture: $arch_raw" >&2
+    exit 1
+    ;;
+ esac
+
+case "$os" in
+  linux|darwin)
+    ;;
+  *)
+    echo "unsupported OS: $os" >&2
+    exit 1
+    ;;
+ esac
+
+asset="viberun-${os}-${arch}.tar.gz"
+sha="${asset}.sha256"
+
+if [ "$VIBERUN_VERSION" = "latest" ]; then
+  download_url="https://github.com/${VIBERUN_REPO}/releases/latest/download/${asset}"
+  sha_url="https://github.com/${VIBERUN_REPO}/releases/latest/download/${sha}"
+else
+  version="$VIBERUN_VERSION"
+  case "$version" in
+    v*)
+      ;;
+    *)
+      version="v$version"
+      ;;
+  esac
+  download_url="https://github.com/${VIBERUN_REPO}/releases/download/${version}/${asset}"
+  sha_url="https://github.com/${VIBERUN_REPO}/releases/download/${version}/${sha}"
+fi
+
+if need_cmd curl; then
+  fetch_cmd=(curl -fsSL "$download_url")
+  fetch_sha_cmd=(curl -fsSL "$sha_url")
+elif need_cmd wget; then
+  fetch_cmd=(wget -qO- "$download_url")
+  fetch_sha_cmd=(wget -qO- "$sha_url")
+else
+  echo "curl or wget is required to download viberun" >&2
+  exit 1
+fi
+
+mkdir -p "$VIBERUN_INSTALL_DIR"
+
+if [ ! -w "$VIBERUN_INSTALL_DIR" ]; then
+  if need_cmd sudo; then
+    install_cmd=(sudo install -m 0755)
+  else
+    echo "install dir not writable and sudo not available: $VIBERUN_INSTALL_DIR" >&2
+    exit 1
+  fi
+else
+  install_cmd=(install -m 0755)
+fi
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+if ! "${fetch_cmd[@]}" >"$tmp_dir/$asset"; then
+  echo "download failed: $download_url" >&2
+  exit 1
+fi
+if ! "${fetch_sha_cmd[@]}" >"$tmp_dir/$sha"; then
+  echo "download failed: $sha_url" >&2
+  exit 1
+fi
+
+normalize_sha() {
+  awk '{
+    fname=$NF
+    star=""
+    if (fname ~ /^\*/) { star="*"; fname=substr(fname,2) }
+    sub(/^.*\//, "", fname)
+    print $1 "  " star fname
+  }'
+}
+
+sha_check="$sha"
+if grep -q '/' "$tmp_dir/$sha"; then
+  normalize_sha < "$tmp_dir/$sha" > "$tmp_dir/${sha}.normalized"
+  sha_check="${sha}.normalized"
+fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+  (cd "$tmp_dir" && sha256sum -c "$sha_check")
+elif command -v shasum >/dev/null 2>&1; then
+  (cd "$tmp_dir" && shasum -a 256 -c "$sha_check")
+else
+  echo "sha256sum or shasum is required" >&2
+  exit 1
+fi
+
+if ! need_cmd tar; then
+  echo "tar is required" >&2
+  exit 1
+fi
+tar -xzf "$tmp_dir/$asset" -C "$tmp_dir"
+
+bin_name="viberun-${os}-${arch}"
+if [ ! -f "$tmp_dir/$bin_name" ]; then
+  echo "missing extracted binary: $bin_name" >&2
+  exit 1
+fi
+
+"${install_cmd[@]}" "$tmp_dir/$bin_name" "$VIBERUN_INSTALL_DIR/$VIBERUN_INSTALL_BIN"
+
+if ! command -v "$VIBERUN_INSTALL_BIN" >/dev/null 2>&1; then
+  cat <<EOF
+viberun installed to $VIBERUN_INSTALL_DIR/$VIBERUN_INSTALL_BIN, but it's not on your PATH.
+Add this to your shell profile:
+  export PATH="$VIBERUN_INSTALL_DIR:\$PATH"
+EOF
+fi
+
+printf "viberun installed: %s\n" "$VIBERUN_INSTALL_DIR/$VIBERUN_INSTALL_BIN"
+printf "Next: run '%s --version' to verify.\n" "$VIBERUN_INSTALL_BIN"

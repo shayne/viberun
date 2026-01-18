@@ -1,0 +1,156 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-viberun:
+    name: Build viberun (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            asset: viberun-linux-amd64
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            asset: viberun-linux-arm64
+          - runner: macos-latest
+            goos: darwin
+            goarch: amd64
+            asset: viberun-darwin-amd64
+          - runner: macos-latest
+            goos: darwin
+            goarch: arm64
+            asset: viberun-darwin-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup mise
+        uses: jdx/mise-action@v3
+        with:
+          install: true
+          cache: true
+      - name: Build
+        run: |
+          mkdir -p dist
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build -o dist/${{ matrix.asset }} ./cmd/viberun
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  build-viberun-server:
+    name: Build viberun-server (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            asset: viberun-server-linux-amd64
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            asset: viberun-server-linux-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup mise
+        uses: jdx/mise-action@v3
+        with:
+          install: true
+          cache: true
+      - name: Build
+        run: |
+          mkdir -p dist
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build -o dist/${{ matrix.asset }} ./cmd/viberun-server
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    needs: [build-viberun, build-viberun-server]
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/raw
+          merge-multiple: true
+      - name: Package tarballs + checksums
+        run: |
+          mkdir -p dist/release
+          for asset in \
+            viberun-linux-amd64 \
+            viberun-linux-arm64 \
+            viberun-darwin-amd64 \
+            viberun-darwin-arm64 \
+            viberun-server-linux-amd64 \
+            viberun-server-linux-arm64; do
+            if [ ! -f "dist/raw/${asset}" ]; then
+              echo "Missing artifact: ${asset}" >&2
+              exit 1
+            fi
+            chmod +x "dist/raw/${asset}"
+            tar -czf "dist/release/${asset}.tar.gz" -C dist/raw "${asset}"
+            (cd dist/release && sha256sum "${asset}.tar.gz" > "${asset}.tar.gz.sha256")
+          done
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/release/viberun-linux-amd64.tar.gz
+            dist/release/viberun-linux-amd64.tar.gz.sha256
+            dist/release/viberun-linux-arm64.tar.gz
+            dist/release/viberun-linux-arm64.tar.gz.sha256
+            dist/release/viberun-darwin-amd64.tar.gz
+            dist/release/viberun-darwin-amd64.tar.gz.sha256
+            dist/release/viberun-darwin-arm64.tar.gz
+            dist/release/viberun-darwin-arm64.tar.gz.sha256
+            dist/release/viberun-server-linux-amd64.tar.gz
+            dist/release/viberun-server-linux-amd64.tar.gz.sha256
+            dist/release/viberun-server-linux-arm64.tar.gz
+            dist/release/viberun-server-linux-arm64.tar.gz.sha256
+
+  push-image:
+    name: Publish container image
+    runs-on: ubuntu-latest
+    needs: [release]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup mise
+        uses: jdx/mise-action@v3
+        with:
+          install: true
+          cache: true
+      - name: Log in to GHCR
+        run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build and push container image
+        run: mise run release:push-image
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}/viberun:${{ github.ref_name }}
+          IMAGE_LATEST: ghcr.io/${{ github.repository }}/viberun:latest

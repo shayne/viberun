@@ -1,0 +1,252 @@
+#!/bin/sh
+set -eu
+
+SERVICES_DIR="${VRCTL_SERVICES_DIR:-/etc/services.d}"
+LOG_DIR="${VRCTL_LOG_DIR:-/var/log/vrctl}"
+
+usage() {
+  cat <<'EOF' >&2
+Usage:
+  vrctl service add <name> --cmd "<command>" [--cwd <dir>] [--env KEY=VAL]... [--no-start]
+  vrctl service start <name>
+  vrctl service stop <name>
+  vrctl service restart <name>
+  vrctl service status <name>
+  vrctl service logs <name> [-n <lines>]
+  vrctl service list
+  vrctl service remove <name>
+EOF
+  exit 2
+}
+
+die() {
+  echo "vrctl: $*" >&2
+  exit 1
+}
+
+service_dir() {
+  printf "%s/%s" "$SERVICES_DIR" "$1"
+}
+
+ensure_tools() {
+  command -v s6-svc >/dev/null 2>&1 || die "s6-svc not found (is s6 installed?)"
+  command -v s6-svstat >/dev/null 2>&1 || die "s6-svstat not found (is s6 installed?)"
+}
+
+validate_env() {
+  key="${1%%=*}"
+  val="${1#*=}"
+  if [ -z "$key" ] || [ "$key" = "$1" ]; then
+    die "invalid env entry: $1 (expected KEY=VAL)"
+  fi
+  case "$key" in
+    *[!A-Za-z0-9_]*)
+      die "invalid env key: $key"
+      ;;
+  esac
+  [ -n "$val" ] || die "env value cannot be empty for $key"
+}
+
+write_run_script() {
+  name="$1"
+  dir="$(service_dir "$name")"
+  run="$dir/run"
+  cat >"$run" <<EOF
+#!/bin/sh
+set -e
+mkdir -p "$LOG_DIR"
+if [ -f "$dir/cwd" ]; then
+  cd "\$(cat "$dir/cwd")"
+fi
+if [ -f "$dir/env" ]; then
+  while IFS= read -r line; do
+    [ -z "\$line" ] && continue
+    case "\$line" in
+      *=*) export "\$line" ;;
+    esac
+  done < "$dir/env"
+fi
+cmd="\$(cat "$dir/command")"
+exec sh -lc "\$cmd" >>"$LOG_DIR/$name.log" 2>&1
+EOF
+  chmod +x "$run"
+}
+
+wait_for_supervise() {
+  dir="$1"
+  i=0
+  while [ "$i" -lt 50 ]; do
+    if [ -d "$dir/supervise" ]; then
+      return 0
+    fi
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 1
+}
+
+service_add() {
+  ensure_tools
+  [ $# -ge 1 ] || usage
+  name="$1"
+  shift
+
+  cmd=""
+  cwd=""
+  start="1"
+  env_lines=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --cmd)
+        [ $# -ge 2 ] || die "--cmd requires a value"
+        cmd="$2"
+        shift 2
+        ;;
+      --cwd)
+        [ $# -ge 2 ] || die "--cwd requires a value"
+        cwd="$2"
+        shift 2
+        ;;
+      --env)
+        [ $# -ge 2 ] || die "--env requires a value"
+        validate_env "$2"
+        env_lines="${env_lines}${env_lines:+\n}$2"
+        shift 2
+        ;;
+      --no-start)
+        start="0"
+        shift
+        ;;
+      --help|-h)
+        usage
+        ;;
+      *)
+        die "unknown flag: $1"
+        ;;
+    esac
+  done
+
+  [ -n "$cmd" ] || die "--cmd is required"
+  mkdir -p "$SERVICES_DIR"
+  dir="$(service_dir "$name")"
+  mkdir -p "$dir"
+  printf "%s\n" "$cmd" >"$dir/command"
+  if [ -n "$cwd" ]; then
+    printf "%s\n" "$cwd" >"$dir/cwd"
+  else
+    rm -f "$dir/cwd"
+  fi
+  if [ -n "$env_lines" ]; then
+    printf "%s\n" "$env_lines" >"$dir/env"
+  else
+    rm -f "$dir/env"
+  fi
+  write_run_script "$name"
+  if [ "$start" = "1" ]; then
+    if ! wait_for_supervise "$dir"; then
+      echo "vrctl: warning: supervise dir not ready for $name; starting anyway" >&2
+    fi
+    s6-svc -u "$dir"
+  fi
+}
+
+service_start() {
+  ensure_tools
+  [ $# -eq 1 ] || usage
+  dir="$(service_dir "$1")"
+  [ -d "$dir" ] || die "service not found: $1"
+  s6-svc -u "$dir"
+}
+
+service_stop() {
+  ensure_tools
+  [ $# -eq 1 ] || usage
+  dir="$(service_dir "$1")"
+  [ -d "$dir" ] || die "service not found: $1"
+  s6-svc -d "$dir"
+}
+
+service_restart() {
+  ensure_tools
+  [ $# -eq 1 ] || usage
+  dir="$(service_dir "$1")"
+  [ -d "$dir" ] || die "service not found: $1"
+  s6-svc -r "$dir"
+}
+
+service_status() {
+  ensure_tools
+  [ $# -eq 1 ] || usage
+  dir="$(service_dir "$1")"
+  [ -d "$dir" ] || die "service not found: $1"
+  s6-svstat "$dir"
+}
+
+service_logs() {
+  [ $# -ge 1 ] || usage
+  name="$1"
+  shift
+  lines="200"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -n)
+        [ $# -ge 2 ] || die "-n requires a value"
+        lines="$2"
+        shift 2
+        ;;
+      --help|-h)
+        usage
+        ;;
+      *)
+        die "unknown flag: $1"
+        ;;
+    esac
+  done
+  file="$LOG_DIR/$name.log"
+  [ -f "$file" ] || die "no logs found for $name"
+  tail -n "$lines" "$file"
+}
+
+service_list() {
+  mkdir -p "$SERVICES_DIR"
+  ls -1 "$SERVICES_DIR"
+}
+
+service_remove() {
+  ensure_tools
+  [ $# -eq 1 ] || usage
+  dir="$(service_dir "$1")"
+  [ -d "$dir" ] || die "service not found: $1"
+  s6-svc -d "$dir" >/dev/null 2>&1 || true
+  rm -rf "$dir"
+}
+
+main() {
+  [ $# -ge 1 ] || usage
+  case "$1" in
+    service)
+      [ $# -ge 2 ] || usage
+      sub="$2"
+      shift 2
+      case "$sub" in
+        add) service_add "$@" ;;
+        start) service_start "$@" ;;
+        stop) service_stop "$@" ;;
+        restart) service_restart "$@" ;;
+        status) service_status "$@" ;;
+        logs) service_logs "$@" ;;
+        list) service_list "$@" ;;
+        remove) service_remove "$@" ;;
+        *) usage ;;
+      esac
+      ;;
+    --help|-h|help)
+      usage
+      ;;
+    *)
+      usage
+      ;;
+  esac
+}
+
+main "$@"

@@ -1,0 +1,52 @@
+fail_fast: true
+repos:
+  - repo: local
+    hooks:
+      - id: viberun-license-check
+        name: viberun license check
+        entry: tools/hooks/check-license
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: viberun-gofmt-check
+        name: viberun gofmt check
+        entry: tools/hooks/gofmt-check
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: viberun-go-vet
+        name: viberun go vet
+        entry: tools/hooks/go-vet
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: viberun-go-mod-tidy
+        name: viberun go mod tidy
+        entry: tools/hooks/go-mod-tidy-check
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: viberun-staticcheck
+        name: viberun staticcheck
+        entry: tools/hooks/staticcheck
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: viberun-depaware
+        name: viberun depaware
+        entry: tools/hooks/depaware-check
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: viberun-depaware-deps
+        name: viberun depaware dependency check
+        entry: tools/hooks/depaware-deps-check
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: viberun-prepare-commit-msg
+        name: viberun prepare commit message
+        entry: tools/hooks/prepare-commit-msg
+        language: system
+        stages: [prepare-commit-msg]

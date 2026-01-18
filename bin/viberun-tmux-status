@@ -1,0 +1,33 @@
+#!/bin/sh
+set -eu
+
+mode="${1:-}"
+app="${VIBERUN_APP:-}"
+port="${VIBERUN_HOST_PORT:-}"
+
+case "$mode" in
+  left)
+    if [ -n "$app" ]; then
+      printf "viberun %s" "$app"
+    else
+      printf "viberun"
+    fi
+    ;;
+  right)
+    if [ -z "$port" ]; then
+      printf "ctrl-d to exit"
+      exit 0
+    fi
+    if command -v ss >/dev/null 2>&1; then
+      if ss -ltn 2>/dev/null | grep -q ":8080 "; then
+        printf "http://localhost:%s  ctrl-d to exit" "$port"
+      fi
+    elif command -v netstat >/dev/null 2>&1; then
+      if netstat -ltn 2>/dev/null | grep -q ":8080 "; then
+        printf "http://localhost:%s  ctrl-d to exit" "$port"
+      fi
+    else
+      printf "http://localhost:%s  ctrl-d to exit" "$port"
+    fi
+    ;;
+esac

@@ -1,0 +1,24 @@
+add_newline = false
+format = "$custom.viberun$directory$git_branch$git_status$character"
+
+[directory]
+truncation_length = 3
+style = "bold blue"
+
+[git_branch]
+format = " [$symbol$branch]($style)"
+symbol = ""
+style = "yellow"
+
+[git_status]
+format = " [$all_status$ahead_behind]($style)"
+style = "yellow"
+
+[character]
+success_symbol = "> "
+error_symbol = "> "
+
+[custom.viberun]
+when = "test -n \"$VIBERUN_APP\""
+command = "printf \"vr:%s \" \"$VIBERUN_APP\""
+style = "bold cyan"

@@ -1,0 +1,59 @@
+[tools]
+node = "latest"
+go = "1.25.5"
+pre-commit = "latest"
+staticcheck = "latest"
+
+[tasks.build]
+run = "go build ./..."
+
+[tasks.test]
+run = "go test ./..."
+
+[tasks.vet]
+run = "go vet ./..."
+
+[tasks.integration]
+run = "bin/viberun-integration"
+
+[tasks.install-githooks]
+description = "Install git hooks via pre-commit"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+
+git config --local --unset-all core.hooksPath || true
+
+pre-commit install --install-hooks \
+  --hook-type pre-commit \
+  --hook-type prepare-commit-msg
+'''
+
+[tasks."build:image"]
+run = "docker build -t viberun:local ."
+
+[tasks."release:build"]
+run = """
+rm -rf dist
+mkdir -p dist
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/viberun-linux-amd64 ./cmd/viberun
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o dist/viberun-linux-arm64 ./cmd/viberun
+CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o dist/viberun-darwin-amd64 ./cmd/viberun
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o dist/viberun-darwin-arm64 ./cmd/viberun
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/viberun-server-linux-amd64 ./cmd/viberun-server
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o dist/viberun-server-linux-arm64 ./cmd/viberun-server
+"""
+
+[tasks."release:push-image"]
+run = """
+: "${IMAGE:?IMAGE is required (e.g., ghcr.io/OWNER/REPO/viberun:TAG)}"
+if [ -n "${IMAGE_LATEST:-}" ]; then
+  docker build -t "$IMAGE" -t "$IMAGE_LATEST" .
+else
+  docker build -t "$IMAGE" .
+fi
+docker push "$IMAGE"
+if [ -n "${IMAGE_LATEST:-}" ]; then
+  docker push "$IMAGE_LATEST"
+fi
+"""

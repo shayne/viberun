@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+app_name="integration-$(date +%s)"
+container="viberun-$app_name"
+state_dir="$(mktemp -d)"
+
+cleanup() {
+  docker rm -f "$container" >/dev/null 2>&1 || true
+  rm -rf "$state_dir"
+}
+trap cleanup EXIT
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "missing required command: $1" >&2
+    exit 1
+  fi
+}
+
+require_cmd docker
+require_cmd go
+require_cmd script
+require_cmd timeout
+
+mkdir -p "$root_dir/bin"
+
+go build -o "$root_dir/bin/viberun-server" "$root_dir/cmd/viberun-server"
+
+docker build -t viberun:latest "$root_dir" >/dev/null
+
+export XDG_CONFIG_HOME="$state_dir"
+
+create_output=""
+if ! create_output="$(printf '\nexit\n' | script -q -c "timeout 60s \"$root_dir/bin/viberun-server\" \"$app_name\" shell" /dev/null 2>&1)"; then
+  echo "integration: failed to create app $app_name" >&2
+  echo "$create_output" >&2
+  exit 1
+fi
+
+if ! echo "$create_output" | grep -Fq "App $app_name does not exist. Create? [Y/n]:"; then
+  echo "integration: expected create prompt for $app_name" >&2
+  echo "$create_output" >&2
+  exit 1
+fi
+
+if ! docker inspect "$container" >/dev/null 2>&1; then
+  echo "integration: expected container $container to exist" >&2
+  exit 1
+fi
+
+if ! docker port "$container" 8080/tcp >/dev/null 2>&1; then
+  echo "integration: expected port mapping for $container 8080/tcp" >&2
+  exit 1
+fi
+
+state_file="$XDG_CONFIG_HOME/viberun/server-state.json"
+if [ ! -f "$state_file" ]; then
+  echo "integration: expected server state file at $state_file" >&2
+  exit 1
+fi
+if ! grep -Fq "\"$app_name\"" "$state_file"; then
+  echo "integration: expected $app_name entry in server state" >&2
+  exit 1
+fi
+
+snapshots_output="$($root_dir/bin/viberun-server "$app_name" snapshots 2>&1)"
+if ! echo "$snapshots_output" | grep -Fq "No snapshots found for $app_name"; then
+  echo "integration: expected snapshots output for $app_name" >&2
+  echo "$snapshots_output" >&2
+  exit 1
+fi
+
+echo "Integration test completed for $app_name"
