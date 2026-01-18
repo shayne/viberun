@@ -19,10 +19,26 @@ color_dim="#[fg=colour245]"
 color_muted="#[fg=colour240]"
 color_green="#[fg=colour35]"
 color_sep="#[fg=colour238]"
+tail="${color_sep}|${color_reset} ${color_dim}ctrl-\\ to close${color_reset}"
 
 is_listening() {
   ss_out="$(ss -ltn 2>/dev/null)" || return 2
   printf "%s\n" "$ss_out" | grep -q ":${listen_port} "
+}
+
+print_close_hint() {
+  printf "%sctrl-\\ to close%s" "$color_dim" "$color_reset"
+}
+
+print_status() {
+  icon_color="$1"
+  icon="$2"
+  label_color="$3"
+  label="$4"
+  printf "%s%s%s %s%s%s %s" \
+    "$icon_color" "$icon" "$color_reset" \
+    "$label_color" "$label" "$color_reset" \
+    "$tail"
 }
 
 case "$mode" in
@@ -35,30 +51,18 @@ case "$mode" in
     ;;
   right)
     if [ -z "$port" ]; then
-      printf "%sctrl-\\ to detach%s" "$color_dim" "$color_reset"
+      print_close_hint
       exit 0
     fi
     if is_listening; then
-      printf "%s%s%s %shttp://localhost:%s%s %s|%s %sctrl-\\ to detach%s" \
-        "$color_green" "$dot_on" "$color_reset" \
-        "$color_green" "$port" "$color_reset" \
-        "$color_sep" "$color_reset" \
-        "$color_dim" "$color_reset"
+      print_status "$color_green" "$dot_on" "$color_green" "http://localhost:${port}"
     else
       case $? in
         2)
-          printf "%s!%s %ssvc check err%s %s|%s %sctrl-\\ to detach%s" \
-            "$color_muted" "$color_reset" \
-            "$color_muted" "$color_reset" \
-            "$color_sep" "$color_reset" \
-            "$color_dim" "$color_reset"
+          print_status "$color_muted" "!" "$color_muted" "svc check err"
           ;;
         *)
-      printf "%s%s%s %sno web svc%s %s|%s %sctrl-\\ to detach%s" \
-        "$color_muted" "$dot_off" "$color_reset" \
-        "$color_muted" "$color_reset" \
-        "$color_sep" "$color_reset" \
-        "$color_dim" "$color_reset"
+          print_status "$color_muted" "$dot_off" "$color_muted" "no web svc"
           ;;
       esac
     fi
