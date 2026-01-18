@@ -265,6 +265,8 @@ Supported agent providers:
 
 Set globally with `viberun config --agent <provider>` or per-run with `viberun --agent <provider> <app>`.
 
+Agent skills inside the container live at `~/.viberun/skills` and are symlinked to each supported agent's expected skill directory.
+
 ### Security model
 
 - All control traffic goes over SSH; the server is invoked on demand and does not expose a network port.

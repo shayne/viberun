@@ -5,6 +5,7 @@ ENV VIBERUN_USER=viberun
 ENV VIBERUN_HOME=/home/viberun
 ENV HOME=/home/viberun
 ENV CODEX_HOME=/home/viberun/.codex
+ENV VIBERUN_SKILLS_HOME=/home/viberun/.viberun/skills
 ENV VIBERUN_APP_DIR=/home/viberun/app
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
@@ -88,17 +89,30 @@ RUN chmod +x /usr/local/bin/viberun-tmux-status \
   && chmod +x /usr/local/bin/vrctl \
   && cat /etc/profile.d/viberun.sh >> /etc/bash.bashrc
 
-RUN mkdir -p ${CODEX_HOME}/skills
-COPY skills/ ${CODEX_HOME}/skills/
-RUN mkdir -p ${CODEX_HOME} \
-  && printf '%s\n' \
+RUN mkdir -p ${VIBERUN_SKILLS_HOME}
+COPY skills/ ${VIBERUN_SKILLS_HOME}/
+RUN set -eux; \
+  mkdir -p \
+    "${CODEX_HOME}" \
+    "${VIBERUN_HOME}/.claude" \
+    "${VIBERUN_HOME}/.gemini" \
+    "${VIBERUN_HOME}/.config/agents" \
+    "${VIBERUN_HOME}/.config/opencode" \
+    "${VIBERUN_HOME}/.opencode"; \
+  ln -s "${VIBERUN_SKILLS_HOME}" "${CODEX_HOME}/skills"; \
+  ln -s "${VIBERUN_SKILLS_HOME}" "${VIBERUN_HOME}/.claude/skills"; \
+  ln -s "${VIBERUN_SKILLS_HOME}" "${VIBERUN_HOME}/.gemini/skills"; \
+  ln -s "${VIBERUN_SKILLS_HOME}" "${VIBERUN_HOME}/.config/agents/skills"; \
+  ln -s "${VIBERUN_SKILLS_HOME}" "${VIBERUN_HOME}/.config/opencode/skill"; \
+  ln -s "${VIBERUN_SKILLS_HOME}" "${VIBERUN_HOME}/.opencode/skill"; \
+  printf '%s\n' \
     '[features]' \
     'skills = true' \
     'web_search_request = true' \
     'unified_exec = true' \
     'shell_snapshot = true' \
     'steer = true' \
-    > ${CODEX_HOME}/config.toml
+    > "${CODEX_HOME}/config.toml"
 RUN mkdir -p ${VIBERUN_HOME}/.local/services ${VIBERUN_HOME}/.local/logs ${VIBERUN_APP_DIR} \
   && chown -R ${VIBERUN_USER}:${VIBERUN_USER} ${VIBERUN_HOME}
 
