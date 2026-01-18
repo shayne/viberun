@@ -7,7 +7,7 @@ LOG_DIR="${VRCTL_LOG_DIR:-${HOME}/.local/logs}"
 usage() {
   cat <<'EOF' >&2
 Usage:
-  vrctl service add <name> --cmd "<command>" [--cwd <dir>] [--env KEY=VAL]... [--no-start]
+  vrctl service add <name> --cmd <executable> [--arg <arg>]... [--cwd <dir>] [--env KEY=VAL]... [--no-start]
   vrctl service start <name>
   vrctl service stop <name>
   vrctl service restart <name>
@@ -70,7 +70,19 @@ if [ -f "$dir/env" ]; then
   done < "$dir/env"
 fi
 cmd="\$(cat "$dir/command")"
-exec sh -c "\$cmd" >>"$LOG_DIR/$name.log" 2>&1
+case "\$cmd" in
+  *[[:space:]]*)
+    echo "vrctl: command contains spaces; re-add service with --arg for each argument" >&2
+    exit 1
+    ;;
+esac
+set --
+if [ -f "$dir/args" ]; then
+  while IFS= read -r arg; do
+    set -- "\$@" "\$arg"
+  done < "$dir/args"
+fi
+exec "\$cmd" "\$@" >>"$LOG_DIR/$name.log" 2>&1
 EOF
   chmod +x "$run"
 }
@@ -118,6 +130,37 @@ ensure_supervise_ready() {
   die "service manager is not running in this container; restart the app session"
 }
 
+wait_for_state() {
+  dir="$1"
+  want="$2"
+  i=0
+  while [ "$i" -lt 80 ]; do
+    out="$(s6-svstat "$dir" 2>/dev/null || true)"
+    case "$out" in
+      "$want"*) return 0 ;;
+    esac
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 1
+}
+
+wait_down() {
+  dir="$1"
+  if s6-svc -wD "$dir" >/dev/null 2>&1; then
+    return 0
+  fi
+  wait_for_state "$dir" "down" || true
+}
+
+wait_up() {
+  dir="$1"
+  if s6-svc -wU "$dir" >/dev/null 2>&1; then
+    return 0
+  fi
+  wait_for_state "$dir" "up" || true
+}
+
 service_add() {
   ensure_tools
   [ $# -ge 1 ] || usage
@@ -125,6 +168,8 @@ service_add() {
   shift
 
   cmd=""
+  args_tmp=""
+  args_written="0"
   cwd=""
   start="1"
   env_tmp=""
@@ -134,6 +179,15 @@ service_add() {
       --cmd)
         [ $# -ge 2 ] || die "--cmd requires a value"
         cmd="$2"
+        shift 2
+        ;;
+      --arg)
+        [ $# -ge 2 ] || die "--arg requires a value"
+        if [ "$args_written" = "0" ]; then
+          args_tmp="$(mktemp)"
+          args_written="1"
+        fi
+        printf '%s\n' "$2" >>"$args_tmp"
         shift 2
         ;;
       --cwd)
@@ -165,10 +219,22 @@ service_add() {
   done
 
   [ -n "$cmd" ] || die "--cmd is required"
+  case "$cmd" in
+    *[[:space:]]*)
+      if [ "$args_written" = "0" ]; then
+        die "--cmd must be a single executable; use --arg for arguments"
+      fi
+      ;;
+  esac
   mkdir -p "$SERVICES_DIR"
   dir="$(service_dir "$name")"
   mkdir -p "$dir"
   printf "%s\n" "$cmd" >"$dir/command"
+  if [ "$args_written" = "1" ]; then
+    mv -f "$args_tmp" "$dir/args"
+  else
+    rm -f "$dir/args"
+  fi
   if [ -n "$cwd" ]; then
     printf "%s\n" "$cwd" >"$dir/cwd"
   else
@@ -196,6 +262,7 @@ service_start() {
   [ -d "$dir" ] || die "service not found: $1"
   ensure_supervise_ready "$dir"
   s6-svc -u "$dir"
+  wait_up "$dir"
 }
 
 service_stop() {
@@ -205,6 +272,7 @@ service_stop() {
   [ -d "$dir" ] || die "service not found: $1"
   ensure_supervise_ready "$dir"
   s6-svc -d "$dir"
+  wait_down "$dir"
 }
 
 service_restart() {
@@ -213,7 +281,10 @@ service_restart() {
   dir="$(service_dir "$1")"
   [ -d "$dir" ] || die "service not found: $1"
   ensure_supervise_ready "$dir"
-  s6-svc -r "$dir"
+  s6-svc -d "$dir"
+  wait_down "$dir"
+  s6-svc -u "$dir"
+  wait_up "$dir"
 }
 
 service_status() {

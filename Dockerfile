@@ -15,6 +15,7 @@ RUN apt-get update \
     ca-certificates \
     curl \
     gnupg \
+    lsof \
     ncurses-bin \
     ncurses-term \
     s6 \
@@ -81,6 +82,7 @@ COPY bin/viberun-tmux-status /usr/local/bin/viberun-tmux-status
 COPY bin/vrctl /usr/local/bin/vrctl
 COPY config/tmux.conf /etc/tmux.conf
 COPY config/starship.toml /home/viberun/.config/starship.toml
+COPY config/AGENTS.app.md /home/viberun/app/AGENTS.md
 COPY config/bashrc-viberun.sh /etc/profile.d/viberun.sh
 RUN chmod +x /usr/local/bin/viberun-tmux-status \
   && chmod +x /usr/local/bin/vrctl \

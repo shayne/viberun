@@ -20,7 +20,7 @@ Purpose: help schedule recurring jobs inside the container using cron.
 ```
 apt-get update
 apt-get install -y cron
-vrctl service add cron --cmd "cron -f"
+vrctl service add cron --cmd cron --arg -f
 ```
 
 ## /etc/cron.d/ example

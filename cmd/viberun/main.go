@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strconv"
@@ -530,12 +531,15 @@ func runApp(flags runFlags, args runArgs) error {
 	}
 	defer cleanup()
 	if interactive {
+		socketPath := newXdgOpenSocketPath(resolved.App)
+		if !isLocalHost(resolved.Host) {
+			removeRemoteSocket(resolved.Host, socketPath)
+		}
 		server, port, err := startOpenListener()
 		if err != nil {
 			return fmt.Errorf("failed to start xdg-open listener: %w", err)
 		}
 		openServer = server
-		socketPath := newXdgOpenSocketPath()
 		extraEnv["VIBERUN_XDG_OPEN_SOCKET"] = socketPath
 		remoteSocket = &sshcmd.RemoteSocketForward{
 			RemotePath: socketPath,
@@ -884,14 +888,50 @@ func isLocalHost(host string) bool {
 	}
 }
 
-func newXdgOpenSocketPath() string {
-	const prefix = "/tmp/viberun-open-"
+func newXdgOpenSocketPath(app string) string {
+	const dir = "/tmp/viberun-open"
 	const suffix = ".sock"
+	cleaned := strings.TrimSpace(app)
+	if cleaned != "" {
+		var b strings.Builder
+		for _, r := range cleaned {
+			switch {
+			case r >= 'a' && r <= 'z':
+				b.WriteRune(r)
+			case r >= 'A' && r <= 'Z':
+				b.WriteRune(r)
+			case r >= '0' && r <= '9':
+				b.WriteRune(r)
+			case r == '-' || r == '_':
+				b.WriteRune(r)
+			default:
+				b.WriteRune('-')
+			}
+		}
+		slug := strings.Trim(b.String(), "-")
+		if slug != "" {
+			return dir + "/" + slug + suffix
+		}
+	}
 	buf := make([]byte, 8)
 	if _, err := rand.Read(buf); err == nil {
-		return prefix + hex.EncodeToString(buf) + suffix
+		return dir + "/" + hex.EncodeToString(buf) + suffix
 	}
-	return fmt.Sprintf("%s%d-%d%s", prefix, os.Getpid(), time.Now().UnixNano(), suffix)
+	return fmt.Sprintf("%s/%d-%d%s", dir, os.Getpid(), time.Now().UnixNano(), suffix)
+}
+
+func removeRemoteSocket(host string, path string) {
+	if strings.TrimSpace(host) == "" || strings.TrimSpace(path) == "" {
+		return
+	}
+	dir := filepath.Dir(path)
+	remoteArgs := []string{"sh", "-lc", shellQuote("mkdir -p " + dir + " && rm -f " + path)}
+	sshArgs := sshcmd.BuildArgs(host, remoteArgs, false)
+	cmd := exec.Command("ssh", sshArgs...)
+	cmd.Env = normalizedSshEnv()
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to remove xdg-open socket %s: %v\n", path, err)
+	}
 }
 
 func startOpenListener() (*http.Server, int, error) {

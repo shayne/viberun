@@ -16,13 +16,19 @@ Purpose: help run a long-lived background process under vrctl.
 4) Check logs and restart policy.
 5) Mention that vrctl keeps the service running on container restarts.
 6) Use `vrctl service restart` when the command/cwd/env are unchanged.
+7) Prefer watch/reload modes when possible so edits apply without restarting the service.
 
 ## vrctl template
 ```
 vrctl service add <name> \
-  --cmd "<command>" \
+  --cmd <executable> \
+  --arg <arg> \
   --cwd /home/viberun/app
 ```
+
+## Reload guidance
+- Python: prefer `uv run <tool> --reload` when available.
+- Node + TypeScript: prefer `npx -y tsx watch <entry>.ts`.
 
 ## Common checks
 - `vrctl service status <name>`

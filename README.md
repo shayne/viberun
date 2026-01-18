@@ -62,7 +62,7 @@ Detach without stopping the agent: Ctrl-\\ . Reattach later with `viberun hello-
 ### 4) Hello-world prompt (paste inside the session)
 
 ```
-Create a beautiful hello-world web app with a simple, tasteful landing page. Keep it running as a service so I can open it from my laptop.
+Create a beautiful hello-world web app with a simple, tasteful landing page.
 ```
 
 ### 5) Open the app

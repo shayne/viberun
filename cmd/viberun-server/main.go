@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -233,6 +234,10 @@ func main() {
 	if !running {
 		explainStoppedContainer(containerName)
 		os.Exit(1)
+	}
+
+	if strings.TrimSpace(os.Getenv("VIBERUN_XDG_OPEN_SOCKET")) != "" {
+		_, _ = xdgOpenSocketPath()
 	}
 
 	authBundle, err := loadAuthBundleFromEnv()
@@ -749,9 +754,10 @@ func dockerRunArgs(name string, app string, port int, image string) []string {
 		fmt.Sprintf("VIBERUN_HOST_RPC_TOKEN_FILE=%s", hostRPC.ContainerTokenFile),
 	)
 	if socketPath, ok := xdgOpenSocketPath(); ok {
+		socketDir := filepath.Dir(socketPath)
 		args = append(args,
 			"-v",
-			fmt.Sprintf("%s:%s", socketPath, socketPath),
+			fmt.Sprintf("%s:%s", socketDir, socketDir),
 			"-e",
 			fmt.Sprintf("VIBERUN_XDG_OPEN_SOCKET=%s", socketPath),
 		)
@@ -780,6 +786,9 @@ func xdgOpenSocketPath() (string, bool) {
 		return "", false
 	}
 	if waitForSocket(socket, 10, 100*time.Millisecond) {
+		if err := os.Chmod(socket, 0o666); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to chmod VIBERUN_XDG_OPEN_SOCKET at %s: %v\n", socket, err)
+		}
 		return socket, true
 	}
 	fmt.Fprintf(os.Stderr, "warning: VIBERUN_XDG_OPEN_SOCKET is set but socket not found at %s\n", socket)

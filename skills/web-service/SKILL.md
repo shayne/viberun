@@ -9,18 +9,23 @@ metadata:
 
 Purpose: help set up a web app inside the container with a stable vrctl-managed service and port 8080 mapping.
 
+## Default behavior
+If the user asks for a web app but does not mention running it as a service, assume they still want it running and set up a vrctl service.
+
 ## Workflow
 1) Identify the app command and working directory.
 2) If the user asks for a simple web app without specifics, pick a lightweight server and build a small, tasteful single-page HTML UI.
 3) Ensure the web server binds to `0.0.0.0` (not `127.0.0.1`) so host port mapping works.
-4) Register the service with `vrctl service add <app> --cmd "<start command>" --cwd /home/viberun/app --env PORT=8080 --env HOST=0.0.0.0`.
+4) Prefer a dev server with reload/watch so edits show up without restarting the service.
+5) Register the service with `vrctl service add <app> --cmd <executable> --arg <arg> ... --cwd /home/viberun/app --env PORT=8080 --env HOST=0.0.0.0`.
 5) Wait briefly (1–2s), then verify with `vrctl service status <app>` and `vrctl service logs <app> -n 200`.
 6) Mention that vrctl keeps the service running on container restarts.
 
 ## vrctl template
 ```
 vrctl service add <app> \
-  --cmd "<start command>" \
+  --cmd <executable> \
+  --arg <arg> \
   --cwd /home/viberun/app \
   --env PORT=8080 \
   --env HOST=0.0.0.0
@@ -33,14 +38,22 @@ vrctl service add <app> \
 ## Service setup checklist (do this in order)
 1) Ensure `/home/viberun/app` exists and contains the server entrypoint.
 2) Use a foreground command (no daemonize/no nohup).
-3) Add the service once with `vrctl service add` (include `--cwd` + `--env PORT=8080 --env HOST=0.0.0.0`).
-4) If the service exists and you changed the command/cwd/env, remove then re-add. Otherwise use `vrctl service restart`.
-5) After add/restart, check status + logs.
+3) Use a reload/watch mode when possible so code edits are visible without restarting the service.
+4) Add the service once with `vrctl service add` (include `--cwd` + `--env PORT=8080 --env HOST=0.0.0.0`).
+5) If the service exists and you changed the command/cwd/env, remove then re-add. Otherwise use `vrctl service restart`.
+6) After add/restart, check status + logs.
 
 ## Common failure and recovery
 - If the service exits due to app errors, fix the app then run `vrctl service restart <app>`.
 - If service start fails, wait 1–2s and retry once. Do not manage supervisors directly.
 - If it still fails, report that the service manager in the container isn’t ready and ask the user to restart the app session.
+- If restart hits “address already in use”, prefer `vrctl service stop <app>`, wait 1–2s, then `vrctl service start <app>`.
+- Use `lsof -nP -iTCP:8080 -sTCP:LISTEN` to confirm the port holder before doing anything destructive; ask the user before killing processes.
+
+## Reload guidance
+- Python: prefer `uv run uvicorn <module>:app --reload --host 0.0.0.0 --port 8080` when using FastAPI/Starlette, or `uv run flask --app <module> run --debug --host 0.0.0.0 --port 8080`.
+- Node + TypeScript: prefer `npx -y tsx watch <entry>.ts` (still foreground).
+- Static sites: browser refresh is enough; no service restart needed.
 
 ## Snapshot guidance
 - If the user asks to save progress, run `vrctl host snapshot` and report the snapshot ref.

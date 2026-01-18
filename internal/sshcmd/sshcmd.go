@@ -99,7 +99,7 @@ func BuildArgsWithForwards(host string, remoteArgs []string, tty bool, forward *
 		if localHost == "" {
 			localHost = "localhost"
 		}
-		args = append(args, "-o", "ExitOnForwardFailure=yes", "-o", "StreamLocalBindUnlink=yes")
+		args = append(args, "-o", "ExitOnForwardFailure=yes", "-o", "StreamLocalBindUnlink=yes", "-o", "StreamLocalBindMask=0111")
 		args = append(args, "-R", fmt.Sprintf("%s:%s:%d", remoteSocket.RemotePath, localHost, remoteSocket.LocalPort))
 	}
 	args = append(args, host)

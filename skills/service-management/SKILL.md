@@ -8,6 +8,7 @@ description: Manage long-running services inside a viberun container. Use when t
 ## Overview
 
 Use `vrctl` to supervise services (start/stop/restart/status/logs). Install packages with `sudo apt`/`sudo apt-get` and run services under the non-root `viberun` user. Avoid systemd inside the container.
+When possible, use dev servers with reload/watch so changes apply without restarting services.
 
 ## Quick Start
 
@@ -21,8 +22,8 @@ sudo apt-get install -y redis-server postgresql
 Create services:
 
 ```sh
-vrctl service add web --cmd "node server.js" --cwd /home/viberun/app
-vrctl service add redis --cmd "redis-server --bind 0.0.0.0"
+vrctl service add web --cmd node --arg server.js --cwd /home/viberun/app
+vrctl service add redis --cmd redis-server --arg --bind --arg 0.0.0.0
 ```
 
 Check status and logs:
@@ -37,7 +38,7 @@ vrctl service logs web -n 200
 Create a service with env:
 
 ```sh
-vrctl service add api --cmd "npm run start" --cwd /home/viberun/app --env NODE_ENV=production --env PORT=8080
+vrctl service add api --cmd npm --arg run --arg start --cwd /home/viberun/app --env NODE_ENV=production --env PORT=8080
 ```
 
 Restart or stop a service:
@@ -58,3 +59,5 @@ vrctl service remove redis
 - Service definitions live under `~/.local/services`. Logs go to `~/.local/logs/<name>.log`.
 - Packages may install systemd units; ignore them and manage processes with `vrctl`.
 - Prefer data directories under `/home/viberun/app` so services can write without root.
+- If restart hits “address already in use”, use `vrctl service stop <name>`, wait 1–2s, then `vrctl service start <name>`.
+- Use `lsof -nP -iTCP:<port> -sTCP:LISTEN` to confirm the port holder before killing processes; ask the user first.
