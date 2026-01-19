@@ -6,6 +6,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -18,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
@@ -26,10 +28,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/creack/pty"
 	"golang.org/x/term"
 
 	"github.com/pelletier/go-toml/v2"
 	"github.com/shayne/viberun/internal/agents"
+	"github.com/shayne/viberun/internal/clipboard"
 	"github.com/shayne/viberun/internal/config"
 	"github.com/shayne/viberun/internal/sshcmd"
 	"github.com/shayne/viberun/internal/target"
@@ -673,11 +677,22 @@ func runApp(flags runFlags, args runArgs) error {
 	if flags.ForwardAgent {
 		sshArgs = append([]string{"-A"}, sshArgs...)
 	}
+	var outputTail tailBuffer
+	outputTail.max = 32 * 1024
+	if interactive && tty {
+		if err := runInteractiveSSHProxy(resolved, sshArgs, &outputTail); err != nil {
+			cleanup()
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				maybeClearDefaultAgentOnFailure(cfg, cfgPath, flags, resolved.App, outputTail.String())
+				os.Exit(exitErr.ExitCode())
+			}
+			return fmt.Errorf("failed to start ssh: %w", err)
+		}
+		return nil
+	}
 	cmd := exec.Command("ssh", sshArgs...)
 	cmd.Env = normalizedSshEnv()
 	cmd.Stdin = os.Stdin
-	var outputTail tailBuffer
-	outputTail.max = 32 * 1024
 	cmd.Stdout = io.MultiWriter(os.Stdout, &outputTail)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &outputTail)
 
@@ -748,6 +763,134 @@ func versionString() string {
 		return trimmed
 	}
 	return fmt.Sprintf("%s (%s)", trimmed, strings.Join(extra, " "))
+}
+
+func runInteractiveSSHProxy(resolved target.Resolved, sshArgs []string, outputTail *tailBuffer) error {
+	cmd := exec.Command("ssh", sshArgs...)
+	cmd.Env = normalizedSshEnv()
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = ptmx.Close()
+	}()
+
+	fd := int(os.Stdin.Fd())
+	state, err := term.MakeRaw(fd)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = term.Restore(fd, state)
+	}()
+
+	_ = pty.InheritSize(os.Stdin, ptmx)
+	stopResize := make(chan struct{})
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGWINCH)
+	go func() {
+		for {
+			select {
+			case <-sigCh:
+				_ = pty.InheritSize(os.Stdin, ptmx)
+			case <-stopResize:
+				return
+			}
+		}
+	}()
+
+	copyDone := make(chan struct{})
+	go func() {
+		if outputTail != nil {
+			_, _ = io.Copy(io.MultiWriter(os.Stdout, outputTail), ptmx)
+		} else {
+			_, _ = io.Copy(os.Stdout, ptmx)
+		}
+		close(copyDone)
+	}()
+
+	go func() {
+		buf := make([]byte, 256)
+		for {
+			n, readErr := os.Stdin.Read(buf)
+			writeFailed := false
+			if n > 0 {
+				for i := 0; i < n; i++ {
+					if buf[i] == 0x16 {
+						handleClipboardImagePaste(resolved, ptmx)
+						continue
+					}
+					if _, err := ptmx.Write(buf[i : i+1]); err != nil {
+						writeFailed = true
+						break
+					}
+				}
+			}
+			if readErr != nil || writeFailed {
+				break
+			}
+		}
+	}()
+
+	err = cmd.Wait()
+	signal.Stop(sigCh)
+	close(stopResize)
+	<-copyDone
+	return err
+}
+
+func handleClipboardImagePaste(resolved target.Resolved, ptmx *os.File) {
+	png, err := clipboard.ReadImagePNG()
+	if err != nil {
+		return
+	}
+	path, err := uploadClipboardImage(resolved, png)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "clipboard image upload failed: %v\n", err)
+		return
+	}
+	_, _ = ptmx.Write([]byte(path + " "))
+}
+
+func uploadClipboardImage(resolved target.Resolved, png []byte) (string, error) {
+	path, err := newClipboardImagePath()
+	if err != nil {
+		return "", err
+	}
+	container := fmt.Sprintf("viberun-%s", resolved.App)
+	writeArg := "cat > " + shellQuote(path)
+	if !isLocalHost(resolved.Host) {
+		writeArg = shellQuote(writeArg)
+	}
+	writeCmd := []string{"docker", "exec", "-i", container, "sh", "-c", writeArg}
+	var cmd *exec.Cmd
+	if isLocalHost(resolved.Host) {
+		cmd = exec.Command(writeCmd[0], writeCmd[1:]...)
+	} else {
+		sshArgs := sshcmd.BuildArgs(resolved.Host, writeCmd, false)
+		cmd = exec.Command("ssh", sshArgs...)
+		cmd.Env = normalizedSshEnv()
+	}
+	cmd.Stdin = bytes.NewReader(png)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		trimmed := strings.TrimSpace(string(output))
+		if trimmed == "" {
+			trimmed = err.Error()
+		}
+		return "", fmt.Errorf("%s", trimmed)
+	}
+	return path, nil
+}
+
+func newClipboardImagePath() (string, error) {
+	randBytes := make([]byte, 6)
+	if _, err := rand.Read(randBytes); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("/tmp/viberun-clip-%d-%s.png", time.Now().UnixNano(), hex.EncodeToString(randBytes)), nil
 }
 
 func looksLikeCustomAgentFailure(output string) bool {

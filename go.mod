@@ -4,10 +4,12 @@ go 1.25.5
 
 require (
 	github.com/charmbracelet/huh v0.8.0
+	github.com/creack/pty v1.1.24
 	github.com/google/addlicense v1.2.0
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/shayne/yargs v1.0.1
 	github.com/tailscale/depaware v0.0.0-20251001183927-9c2ad255ef3f
+	golang.design/x/clipboard v0.7.1
 	golang.org/x/term v0.39.0
 )
 
@@ -37,9 +39,12 @@ require (
 	github.com/pkg/diff v0.0.0-20200914180035-5b29258ca4f7 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/mod v0.17.0 // indirect
+	golang.org/x/exp/shiny v0.0.0-20250606033433-dcc06ee1d476 // indirect
+	golang.org/x/image v0.28.0 // indirect
+	golang.org/x/mobile v0.0.0-20250606033058-a2a15c67f36f // indirect
+	golang.org/x/mod v0.25.0 // indirect
 	golang.org/x/sync v0.15.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
-	golang.org/x/text v0.23.0 // indirect
-	golang.org/x/tools v0.21.1-0.20240508182429-e35e4ccd0d2d // indirect
+	golang.org/x/text v0.26.0 // indirect
+	golang.org/x/tools v0.34.0 // indirect
 )
