@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build !linux
+//go:build linux && clipboard_x11
 
 package clipboard
 
@@ -24,6 +24,12 @@ func ReadImagePNG() ([]byte, error) {
 		return data, nil
 	} else if !errors.Is(err, ErrNoImage) {
 		return nil, err
+	}
+
+	if isWSL() {
+		if data, err := readWSLClipboardPNG(); err == nil {
+			return data, nil
+		}
 	}
 
 	return nil, ErrNoImage
