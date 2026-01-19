@@ -17,6 +17,7 @@ RUN apt-get update \
     curl \
     gnupg \
     iproute2 \
+    iputils-ping \
     lsof \
     ncurses-bin \
     ncurses-term \
