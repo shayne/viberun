@@ -1054,16 +1054,6 @@ pull_image() {
   $SUDO docker tag "$image" "viberun:latest" || true
 }
 
-if [ "$(id -u)" -ne 0 ]; then
-  if ! getent group docker >/dev/null 2>&1; then
-    $SUDO groupadd docker
-  fi
-  if ! id -nG "$USER" | tr ' ' '\n' | grep -qx docker; then
-    $SUDO usermod -aG docker "$USER"
-    echo "added $USER to docker group; run 'newgrp docker' or reconnect to apply" >&2
-  fi
-fi
-
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 arch_raw="$(uname -m)"
 case "$arch_raw" in
