@@ -113,7 +113,7 @@ func TestBuildArgsWithRemoteSocketForward(t *testing.T) {
 		LocalPort:  51234,
 	}
 	args := BuildArgsWithForwards("host-a", remote, true, nil, remoteSocket)
-	if len(args) < 7 {
+	if len(args) < 9 {
 		t.Fatalf("expected args, got %v", args)
 	}
 	if args[0] != "-tt" {
