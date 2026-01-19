@@ -6,6 +6,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -92,5 +93,22 @@ func TestStartHostRPCCorrectsDirPermissions(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o755 {
 		t.Fatalf("expected host rpc dir perms 0755, got %o", info.Mode().Perm())
+	}
+}
+
+func TestDeleteHostRPCDir(t *testing.T) {
+	app := "test-delete-" + time.Now().Format("20060102150405.000000000")
+	cfg := hostRPCConfigForApp(app)
+	if err := os.MkdirAll(cfg.HostDir, 0o755); err != nil {
+		t.Fatalf("mkdir host rpc dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfg.HostDir, "token"), []byte("ok\n"), 0o644); err != nil {
+		t.Fatalf("write host rpc file: %v", err)
+	}
+	if err := deleteHostRPCDir(app); err != nil {
+		t.Fatalf("deleteHostRPCDir: %v", err)
+	}
+	if _, err := os.Stat(cfg.HostDir); !os.IsNotExist(err) {
+		t.Fatalf("expected host rpc dir removed, got %v", err)
 	}
 }

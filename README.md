@@ -4,7 +4,7 @@
 
 # viberun
 
-`viberun` is a CLI-first, agent-native app host. Run `viberun <app>` locally and get dropped into an agent session inside a persistent Ubuntu container on a remote host. Containers keep their filesystem state between sessions and can run long-lived services.
+`viberun` is a CLI-first, agent-native app host. Run `viberun <app>` locally and get dropped into an agent session inside a persistent Ubuntu container on a remote host. App data is stored under `/home/viberun` and survives container restarts or image updates.
 
 ## Quick start (end-to-end)
 
@@ -213,6 +213,7 @@ The bootstrap script (run on the host) does the following:
 
 - Verifies the host is Ubuntu.
 - Installs Docker (if missing) and enables it.
+- Installs Btrfs tools (`btrfs-progs`) for volume snapshots.
 - Pulls the `viberun` container image from GHCR (unless using local image mode).
 - Downloads and installs the `viberun-server` binary.
 
@@ -234,12 +235,18 @@ Useful bootstrap overrides:
 
 ### Snapshots and restore
 
-Snapshots are Docker commits stored as images named `viberun-snapshot-<app>:vN` (auto-incremented versions).
+Snapshots are Btrfs subvolume snapshots of the app's `/home/viberun` volume (auto-incremented versions).
+On the host, each app uses a loop-backed Btrfs file under `/var/lib/viberun/apps/<app>/home.btrfs`.
 
 - `viberun <app> snapshot` creates the next `vN` snapshot.
 - `viberun <app> snapshots` lists versions with timestamps.
 - `viberun <app> restore <vN|latest>` restores from a snapshot (`latest` picks the highest `vN`).
-- `viberun <app> --delete -y` removes the container and snapshots.
+- `viberun <app> --delete -y` removes the container, the app volume + snapshots, and the host RPC directory.
+
+Restore details:
+- The host stops the container (if running) to safely unmount the volume.
+- The current `@home` subvolume is replaced by a new writable snapshot of `@snapshots/vN`.
+- The container is started again, and s6 reloads services from `/home/viberun/.local/services`.
 
 ### Host RPC bridge
 
@@ -265,7 +272,7 @@ Supported agent providers:
 
 Set globally with `viberun config --agent <provider>` or per-run with `viberun --agent <provider> <app>`.
 
-Agent skills inside the container live at `~/.viberun/skills` and are symlinked to each supported agent's expected skill directory.
+Base skills are shipped in `/opt/viberun/skills` and symlinked into each agent's skills directory. User skills can be added directly to the agent-specific skills directory under `/home/viberun`.
 
 ### Security model
 
@@ -286,5 +293,6 @@ Agent skills inside the container live at `~/.viberun/skills` and are symlinked 
 
 - `unsupported OS: ... expected ubuntu`: bootstrap currently supports Ubuntu only.
 - `docker is required but was not found in PATH`: install Docker on the host or re-run bootstrap.
+- `missing btrfs on host`: rerun bootstrap to install `btrfs-progs` and ensure sudo access.
 - `no host provided and no default host configured`: run `viberun config --host myhost` or use `myapp@host`.
 - `container image architecture mismatch`: delete and recreate the app (`viberun <app> --delete -y`).

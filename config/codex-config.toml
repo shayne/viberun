@@ -1,0 +1,6 @@
+[features]
+skills = true
+web_search_request = true
+unified_exec = true
+shell_snapshot = true
+steer = true

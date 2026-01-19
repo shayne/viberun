@@ -52,7 +52,7 @@ func TestHostRPCSnapshotAuth(t *testing.T) {
 func TestHostRPCSnapshotAndList(t *testing.T) {
 	app := "test-list-" + time.Now().Format("20060102150405.000000000")
 	server, _, err := startHostRPC(app, "container", 1234, func(string, string) (string, error) {
-		return "viberun-snapshot-test:tag", nil
+		return "tag", nil
 	}, func(string) ([]string, error) {
 		return []string{"tag1", "tag2"}, nil
 	}, func(string, string, int, string) error {
@@ -78,7 +78,7 @@ func TestHostRPCSnapshotAndList(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
-	if got := strings.TrimSpace(string(body)); got != "viberun-snapshot-test:tag" {
+	if got := strings.TrimSpace(string(body)); got != "tag" {
 		t.Fatalf("unexpected snapshot response: %q", got)
 	}
 
@@ -141,7 +141,7 @@ func TestHostRPCRestore(t *testing.T) {
 	}
 	select {
 	case got := <-called:
-		expected := "container:" + app + ":viberun-snapshot-" + app + ":tag1"
+		expected := "container:" + app + ":tag1"
 		if got != expected {
 			t.Fatalf("restore not called correctly: %q", got)
 		}

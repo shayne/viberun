@@ -110,22 +110,18 @@ func TestResolveSnapshotRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if ref != "viberun-snapshot-myapp:customtag" {
+	if ref != "customtag" {
 		t.Fatalf("unexpected ref: %q", ref)
 	}
-	ref, err = resolveSnapshotRef("myapp", "repo:tag")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ref != "repo:tag" {
-		t.Fatalf("unexpected ref: %q", ref)
+	if _, err := resolveSnapshotRef("myapp", "repo:tag"); err == nil {
+		t.Fatalf("expected error for invalid snapshot name with colon")
 	}
 	if _, err := resolveSnapshotRef("myapp", ""); err == nil {
 		t.Fatalf("expected error for empty snapshot name")
 	}
 }
 
-func TestSnapshotVersion(t *testing.T) {
+func TestParseSnapshotTag(t *testing.T) {
 	cases := map[string]struct {
 		version int
 		ok      bool
@@ -140,9 +136,9 @@ func TestSnapshotVersion(t *testing.T) {
 		"":       {0, false},
 	}
 	for input, expected := range cases {
-		version, ok := snapshotVersion(input)
+		version, ok := parseSnapshotTag(input)
 		if ok != expected.ok || version != expected.version {
-			t.Fatalf("snapshotVersion(%q)=%d,%v want %d,%v", input, version, ok, expected.version, expected.ok)
+			t.Fatalf("parseSnapshotTag(%q)=%d,%v want %d,%v", input, version, ok, expected.version, expected.ok)
 		}
 	}
 }
@@ -172,7 +168,7 @@ func TestLatestSnapshotRefFromInfos(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if ref != "viberun-snapshot-app:v5" {
+	if ref != "v5" {
 		t.Fatalf("expected v5 latest, got %q", ref)
 	}
 
@@ -184,7 +180,7 @@ func TestLatestSnapshotRefFromInfos(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if ref != "viberun-snapshot-app:tag-b" {
+	if ref != "tag-b" {
 		t.Fatalf("expected newest tag-b, got %q", ref)
 	}
 }

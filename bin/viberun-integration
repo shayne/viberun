@@ -7,7 +7,7 @@ container="viberun-$app_name"
 state_dir="$(mktemp -d)"
 
 cleanup() {
-  docker rm -f "$container" >/dev/null 2>&1 || true
+  "$root_dir/bin/viberun-server" "$app_name" delete >/dev/null 2>&1 || true
   rm -rf "$state_dir"
 }
 trap cleanup EXIT
@@ -23,6 +23,18 @@ require_cmd docker
 require_cmd go
 require_cmd script
 require_cmd timeout
+require_cmd btrfs
+require_cmd mkfs.btrfs
+require_cmd losetup
+require_cmd mount
+require_cmd umount
+
+if command -v sudo >/dev/null 2>&1; then
+  if ! sudo -n true 2>/dev/null; then
+    echo "passwordless sudo is required for btrfs volume operations" >&2
+    exit 1
+  fi
+fi
 
 mkdir -p "$root_dir/bin"
 

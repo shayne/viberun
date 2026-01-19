@@ -5,7 +5,7 @@ This AGENTS.md applies to the app working directory inside the container.
 ## Environment
 - Persistent Ubuntu container for a single app.
 - Workdir: /home/viberun/app (put code here).
-- Home: /home/viberun (dotfiles live under /home/viberun/.codex).
+- Home: /home/viberun (persisted boundary for code, data, and services).
 - Default user: viberun (use sudo only for apt/apt-get installs).
 
 ## Services and ports
@@ -25,6 +25,11 @@ This AGENTS.md applies to the app working directory inside the container.
 - $web-service: run a web app on port 8080 with vrctl.
 - $background-service: run background processes under vrctl.
 - $cron-jobs: set up cron via vrctl.
+
+## Skills layout
+- Base skills are shipped in /opt/viberun/skills and symlinked into each agent's skills directory.
+- User skills should be added directly under the agent's skills directory (for example, /home/viberun/.codex/skills).
+- Base skill symlinks are refreshed on container start; user skills are left untouched.
 
 ## Snapshots and safety
 - Before risky or destructive changes, ask if the user wants a snapshot.

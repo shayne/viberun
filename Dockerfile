@@ -5,7 +5,7 @@ ENV VIBERUN_USER=viberun
 ENV VIBERUN_HOME=/home/viberun
 ENV HOME=/home/viberun
 ENV CODEX_HOME=/home/viberun/.codex
-ENV VIBERUN_SKILLS_HOME=/home/viberun/.viberun/skills
+ENV VIBERUN_SKILLS_HOME=/opt/viberun/skills
 ENV VIBERUN_APP_DIR=/home/viberun/app
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
@@ -86,42 +86,25 @@ RUN tic -x /tmp/ghostty-terminfo \
 COPY bin/viberun-tmux-status /usr/local/bin/viberun-tmux-status
 COPY bin/vrctl /usr/local/bin/vrctl
 COPY config/tmux.conf /etc/tmux.conf
-COPY config/starship.toml /home/viberun/.config/starship.toml
-COPY config/AGENTS.app.md /home/viberun/app/AGENTS.md
 COPY config/bashrc-viberun.sh /etc/profile.d/viberun.sh
 RUN chmod +x /usr/local/bin/viberun-tmux-status \
   && chmod +x /usr/local/bin/vrctl \
   && cat /etc/profile.d/viberun.sh >> /etc/bash.bashrc
 
-RUN mkdir -p ${VIBERUN_SKILLS_HOME}
+RUN mkdir -p ${VIBERUN_SKILLS_HOME} /opt/viberun/templates
 COPY skills/ ${VIBERUN_SKILLS_HOME}/
-RUN set -eux; \
-  mkdir -p \
-    "${CODEX_HOME}" \
-    "${VIBERUN_HOME}/.claude" \
-    "${VIBERUN_HOME}/.gemini" \
-    "${VIBERUN_HOME}/.config/agents" \
-    "${VIBERUN_HOME}/.config/opencode" \
-    "${VIBERUN_HOME}/.opencode"; \
-  ln -s "${VIBERUN_SKILLS_HOME}" "${CODEX_HOME}/skills"; \
-  ln -s "${VIBERUN_SKILLS_HOME}" "${VIBERUN_HOME}/.claude/skills"; \
-  ln -s "${VIBERUN_SKILLS_HOME}" "${VIBERUN_HOME}/.gemini/skills"; \
-  ln -s "${VIBERUN_SKILLS_HOME}" "${VIBERUN_HOME}/.config/agents/skills"; \
-  ln -s "${VIBERUN_SKILLS_HOME}" "${VIBERUN_HOME}/.config/opencode/skill"; \
-  ln -s "${VIBERUN_SKILLS_HOME}" "${VIBERUN_HOME}/.opencode/skill"; \
-  printf '%s\n' \
-    '[features]' \
-    'skills = true' \
-    'web_search_request = true' \
-    'unified_exec = true' \
-    'shell_snapshot = true' \
-    'steer = true' \
-    > "${CODEX_HOME}/config.toml"
+COPY config/starship.toml /opt/viberun/templates/starship.toml
+COPY config/AGENTS.app.md /opt/viberun/templates/AGENTS.app.md
+COPY config/codex-config.toml /opt/viberun/templates/codex-config.toml
 RUN mkdir -p ${VIBERUN_HOME}/.local/services ${VIBERUN_HOME}/.local/logs ${VIBERUN_APP_DIR} \
   && chown -R ${VIBERUN_USER}:${VIBERUN_USER} ${VIBERUN_HOME}
+
+COPY bin/viberun-entrypoint /usr/local/bin/viberun-entrypoint
+RUN chmod +x /usr/local/bin/viberun-entrypoint
 
 USER ${VIBERUN_USER}
 
 WORKDIR /home/viberun/app
 
+ENTRYPOINT ["/usr/local/bin/viberun-entrypoint"]
 CMD ["/usr/bin/s6-svscan", "/home/viberun/.local/services"]

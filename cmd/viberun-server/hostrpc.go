@@ -97,6 +97,14 @@ func ensureHostRPCDir(app string) error {
 	return nil
 }
 
+func deleteHostRPCDir(app string) error {
+	cfg := hostRPCConfigForApp(app)
+	if _, err := os.Stat(cfg.HostDir); os.IsNotExist(err) {
+		return nil
+	}
+	return os.RemoveAll(cfg.HostDir)
+}
+
 func startHostRPC(app string, containerName string, port int, snapshotFn func(containerName string, app string) (string, error), listFn func(app string) ([]string, error), restoreFn func(containerName string, app string, port int, snapshotRef string) error) (*hostRPCServer, map[string]string, error) {
 	cfg := hostRPCConfigForApp(app)
 	if err := ensureHostRPCDir(app); err != nil {

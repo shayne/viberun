@@ -1,0 +1,79 @@
+#!/bin/sh
+set -e
+
+VIBERUN_HOME="${VIBERUN_HOME:-/home/viberun}"
+VIBERUN_SKILLS_HOME="${VIBERUN_SKILLS_HOME:-/opt/viberun/skills}"
+TEMPLATE_DIR="/opt/viberun/templates"
+
+ensure_dir() {
+  mkdir -p "$1"
+}
+
+seed_file() {
+  src="$1"
+  dest="$2"
+  if [ -f "$src" ] && [ ! -f "$dest" ]; then
+    cp "$src" "$dest"
+  fi
+}
+
+ensure_dir "${VIBERUN_HOME}/app"
+ensure_dir "${VIBERUN_HOME}/.local/services"
+ensure_dir "${VIBERUN_HOME}/.local/logs"
+ensure_dir "${VIBERUN_HOME}/.config"
+ensure_dir "${VIBERUN_HOME}/.codex"
+ensure_dir "${VIBERUN_HOME}/.claude"
+ensure_dir "${VIBERUN_HOME}/.gemini"
+ensure_dir "${VIBERUN_HOME}/.config/agents"
+ensure_dir "${VIBERUN_HOME}/.config/opencode"
+ensure_dir "${VIBERUN_HOME}/.opencode"
+
+seed_file "${TEMPLATE_DIR}/AGENTS.app.md" "${VIBERUN_HOME}/app/AGENTS.md"
+seed_file "${TEMPLATE_DIR}/starship.toml" "${VIBERUN_HOME}/.config/starship.toml"
+seed_file "${TEMPLATE_DIR}/codex-config.toml" "${VIBERUN_HOME}/.codex/config.toml"
+
+sync_skills() {
+  dir="$1"
+  ensure_dir "$dir"
+  for entry in "$dir"/*; do
+    [ -e "$entry" ] || continue
+    if [ -L "$entry" ]; then
+      target="$(readlink "$entry" || true)"
+      case "$target" in
+        "${VIBERUN_SKILLS_HOME}"/*)
+          if [ ! -e "$target" ]; then
+            rm -f "$entry"
+          fi
+          ;;
+      esac
+    fi
+  done
+  if [ -d "${VIBERUN_SKILLS_HOME}" ]; then
+    for skill in "${VIBERUN_SKILLS_HOME}"/*; do
+      [ -d "$skill" ] || continue
+      name="$(basename "$skill")"
+      dest="${dir}/${name}"
+      if [ -e "$dest" ] && [ ! -L "$dest" ]; then
+        continue
+      fi
+      if [ -L "$dest" ]; then
+        target="$(readlink "$dest" || true)"
+        if [ "$target" != "$skill" ]; then
+          rm -f "$dest"
+        fi
+      fi
+      if [ ! -e "$dest" ]; then
+        ln -s "$skill" "$dest"
+      fi
+    done
+  fi
+}
+
+sync_skills "${VIBERUN_HOME}/.codex/skills"
+sync_skills "${VIBERUN_HOME}/.claude/skills"
+sync_skills "${VIBERUN_HOME}/.gemini/skills"
+sync_skills "${VIBERUN_HOME}/.config/agents/skills"
+sync_skills "${VIBERUN_HOME}/.config/opencode/skill"
+sync_skills "${VIBERUN_HOME}/.opencode/skill"
+
+exec "$@"

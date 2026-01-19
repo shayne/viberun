@@ -19,6 +19,18 @@ require_cmd go
 require_cmd timeout
 require_cmd curl
 require_cmd script
+require_cmd btrfs
+require_cmd mkfs.btrfs
+require_cmd losetup
+require_cmd mount
+require_cmd umount
+
+if command -v sudo >/dev/null 2>&1; then
+  if ! sudo -n true 2>/dev/null; then
+    echo "passwordless sudo is required for btrfs volume operations" >&2
+    exit 1
+  fi
+fi
 
 if ! ssh -o BatchMode=yes -o ConnectTimeout=5 localhost true >/dev/null 2>&1; then
   echo "ssh to localhost failed; ensure sshd is running and localhost is configured for key auth" >&2
@@ -139,22 +151,24 @@ if ! docker exec "$container" sh -c "command -v vrctl >/dev/null 2>&1"; then
   exit 1
 fi
 
-docker exec "$container" sh -c "printf 'before' > /tmp/viberun-snap-test"
+docker exec "$container" sh -c "printf 'before' > /home/viberun/app/.viberun-snap-test"
 
 viberun "$app_name" snapshot >/dev/null
 
-docker exec "$container" sh -c "printf 'after' > /tmp/viberun-snap-test"
+docker exec "$container" sh -c "printf 'after' > /home/viberun/app/.viberun-snap-test"
 
 viberun "$app_name" restore latest >/dev/null
 
 wait_for_container
 
-restored_contents="$(docker exec "$container" sh -c "cat /tmp/viberun-snap-test" 2>/dev/null || true)"
+restored_contents="$(docker exec "$container" sh -c "cat /home/viberun/app/.viberun-snap-test" 2>/dev/null || true)"
 if [ "$restored_contents" != "before" ]; then
   echo "expected snapshot restore to revert test file in $container" >&2
   exit 1
 fi
 
 printf '\nexit\n' | timeout 45s viberun "$app_name" shell >/dev/null
+
+viberun "$app_name" --delete -y >/dev/null 2>&1 || true
 
 echo "E2E smoke test completed for $app_name"

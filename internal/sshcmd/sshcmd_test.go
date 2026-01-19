@@ -125,11 +125,14 @@ func TestBuildArgsWithRemoteSocketForward(t *testing.T) {
 	if args[3] != "-o" || args[4] != "StreamLocalBindUnlink=yes" {
 		t.Fatalf("unexpected forward options: %v", args[3:5])
 	}
-	if args[5] != "-R" {
-		t.Fatalf("expected -R, got %q", args[5])
+	if args[5] != "-o" || args[6] != "StreamLocalBindMask=0111" {
+		t.Fatalf("unexpected forward options: %v", args[5:7])
 	}
-	if args[6] != "/tmp/viberun-open.sock:localhost:51234" {
-		t.Fatalf("unexpected remote forward: %v", args[6])
+	if args[7] != "-R" {
+		t.Fatalf("expected -R, got %q", args[7])
+	}
+	if args[8] != "/tmp/viberun-open.sock:localhost:51234" {
+		t.Fatalf("unexpected remote forward: %v", args[8])
 	}
 }
 

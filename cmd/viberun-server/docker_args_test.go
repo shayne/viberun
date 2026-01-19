@@ -23,6 +23,10 @@ func TestDockerRunArgsIncludesHostRPCMount(t *testing.T) {
 	cfg := hostRPCConfigForApp("myapp")
 	args := dockerRunArgs("viberun-myapp", "myapp", 4242, "viberun:test")
 
+	homeCfg := homeVolumeConfigForApp("myapp")
+	if !hasPair(args, "-v", fmt.Sprintf("%s:%s", homeCfg.MountDir, "/home/viberun")) {
+		t.Fatalf("expected home volume mount in args: %v", args)
+	}
 	if !hasPair(args, "-v", fmt.Sprintf("%s:%s", cfg.HostDir, cfg.ContainerDir)) {
 		t.Fatalf("expected host rpc mount in args: %v", args)
 	}

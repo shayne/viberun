@@ -715,6 +715,31 @@ if ! need_cmd curl && ! need_cmd wget; then
   $SUDO apt-get install -y curl ca-certificates
 fi
 
+if ! need_cmd mkfs.btrfs || ! need_cmd btrfs; then
+  $SUDO apt-get update -y
+  $SUDO apt-get install -y btrfs-progs
+fi
+
+if [ "$(id -u)" -ne 0 ]; then
+  if need_cmd sudo; then
+    btrfs_cmds=""
+    for bin in btrfs mkfs.btrfs losetup mount umount; do
+      path="$(command -v "$bin" || true)"
+      if [ -n "$path" ]; then
+        if [ -n "$btrfs_cmds" ]; then
+          btrfs_cmds="${btrfs_cmds}, ${path}"
+        else
+          btrfs_cmds="${path}"
+        fi
+      fi
+    done
+    if [ -n "$btrfs_cmds" ]; then
+      echo "${USER} ALL=(root) NOPASSWD: ${btrfs_cmds}" | $SUDO tee /etc/sudoers.d/viberun-btrfs >/dev/null
+      $SUDO chmod 0440 /etc/sudoers.d/viberun-btrfs
+    fi
+  fi
+fi
+
 if ! need_cmd docker; then
   if need_cmd curl; then
     curl -fsSL https://get.docker.com | $SUDO sh
