@@ -23,6 +23,7 @@ import (
 
 	"github.com/shayne/viberun/internal/agents"
 	"github.com/shayne/viberun/internal/server"
+	"github.com/shayne/viberun/internal/tui"
 	"github.com/shayne/yargs"
 )
 
@@ -267,6 +268,7 @@ func main() {
 		return
 	}
 
+	var ui *tui.Progress
 	if !exists {
 		if !autoCreateEnabled() {
 			if !promptCreate(app) {
@@ -275,14 +277,22 @@ func main() {
 			}
 		}
 
+		ui = newAppProgress(app)
+		ui.Start()
+		ui.Step("Prepare volume")
 		if _, _, err := ensureHomeVolume(app, true); err != nil {
+			ui.Fail("failed")
 			fmt.Fprintf(os.Stderr, "failed to prepare app volume: %v\n", err)
 			os.Exit(1)
 		}
+		ui.Done("")
+		ui.Step("Start container")
 		if err := dockerRun(containerName, app, port); err != nil {
+			ui.Fail("failed")
 			fmt.Fprintf(os.Stderr, "failed to create container: %v\n", err)
 			os.Exit(1)
 		}
+		ui.Done("")
 	} else {
 		running, err := containerRunning(containerName)
 		if err != nil {
@@ -297,11 +307,19 @@ func main() {
 			os.Exit(1)
 		}
 		if !running {
+			ui = newAppProgress(app)
+			ui.Start()
+			ui.Step("Start container")
 			if err := dockerStart(containerName); err != nil {
+				ui.Fail("failed")
 				fmt.Fprintf(os.Stderr, "failed to start container: %v\n", err)
 				os.Exit(1)
 			}
+			ui.Done("")
 		}
+	}
+	if ui != nil {
+		ui.Stop()
 	}
 
 	if stateDirty {
@@ -564,17 +582,11 @@ func dockerRun(name string, app string, port int) error {
 		return err
 	}
 	args := dockerRunArgs(name, app, port, defaultImage)
-	cmd := exec.Command("docker", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return runDockerCommandOutput(args...)
 }
 
 func dockerStart(name string) error {
-	cmd := exec.Command("docker", "start", name)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return runDockerCommandOutput("start", name)
 }
 
 func dockerExec(name string, agentArgs []string, extraEnv map[string]string) error {
@@ -612,6 +624,11 @@ func normalizeTermValue(termValue string) string {
 		return "xterm-256color"
 	}
 	return value
+}
+
+func newAppProgress(app string) *tui.Progress {
+	tty := term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+	return tui.NewProgress(os.Stdout, tty, app, "")
 }
 
 func dockerExecArgs(name string, agentArgs []string, tty bool, env map[string]string) []string {
@@ -712,10 +729,7 @@ func containerLogsTail(name string, lines int) (string, error) {
 func deleteApp(containerName string, app string, state *server.State, exists bool) (bool, error) {
 	removed := false
 	if exists {
-		cmd := exec.Command("docker", "rm", "-f", containerName)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
+		if err := runDockerCommandOutput("rm", "-f", containerName); err != nil {
 			return false, err
 		}
 	}
@@ -944,7 +958,7 @@ func restoreSnapshot(containerName string, app string, port int, snapshotRef str
 		return err
 	}
 	if exists {
-		_ = exec.Command("docker", "stop", containerName).Run()
+		_ = runDockerCommandOutput("stop", containerName)
 	}
 	if err := restoreHomeVolume(cfg, snapshotRef); err != nil {
 		return err

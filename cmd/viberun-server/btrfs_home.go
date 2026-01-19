@@ -222,10 +222,10 @@ func findLoopDevice(path string) (string, error) {
 
 func ensureBtrfsFilesystem(loop string, created bool) error {
 	if created {
-		cmd := runHostCommand("mkfs.btrfs", "-f", loop)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		return cmd.Run()
+		if err := runHostCommandOutput("mkfs.btrfs", "-f", loop); err != nil {
+			return err
+		}
+		return nil
 	}
 	if ok, err := isBtrfsDevice(loop); err == nil && ok {
 		return nil
@@ -259,10 +259,7 @@ func ensureRootMount(loop string, root string) error {
 		}
 		return nil
 	}
-	cmd := runHostCommand("mount", "-t", "btrfs", loop, root)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return runHostCommandOutput("mount", "-t", "btrfs", loop, root)
 }
 
 func ensureSubvolumes(cfg homeVolumeConfig) error {
@@ -276,10 +273,7 @@ func ensureSubvolumes(cfg homeVolumeConfig) error {
 		} else if !os.IsNotExist(err) {
 			return err
 		}
-		cmd := runHostCommand("btrfs", "subvolume", "create", path)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
+		if err := runHostCommandOutput("btrfs", "subvolume", "create", path); err != nil {
 			return err
 		}
 	}
@@ -299,10 +293,7 @@ func ensureSubvolumeMounted(loop string, subvol string, target string) error {
 		}
 		return nil
 	}
-	cmd := runHostCommand("mount", "-t", "btrfs", "-o", "subvol="+subvol, loop, target)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return runHostCommandOutput("mount", "-t", "btrfs", "-o", "subvol="+subvol, loop, target)
 }
 
 func writeHomeVolumeMeta(cfg homeVolumeConfig, loop string) error {
@@ -375,6 +366,19 @@ func runHostCommand(name string, args ...string) *exec.Cmd {
 	}
 	sudoArgs := append([]string{"-n", name}, args...)
 	return exec.Command("sudo", sudoArgs...)
+}
+
+func runHostCommandOutput(name string, args ...string) error {
+	cmd := runHostCommand(name, args...)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	output := strings.TrimSpace(string(out))
+	if output == "" {
+		return fmt.Errorf("failed to run %s: %w", name, err)
+	}
+	return fmt.Errorf("failed to run %s: %w: %s", name, err, output)
 }
 
 func ensureOwnedDir(path string, uid int, gid int) error {

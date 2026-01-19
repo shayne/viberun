@@ -25,24 +25,18 @@ func snapshotContainer(containerName string, cfg homeVolumeConfig, tag string) e
 	}
 	paused := false
 	if running, _ := containerRunning(containerName); running {
-		cmd := exec.Command("docker", "pause", containerName)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
+		if err := runDockerCommandOutput("pause", containerName); err != nil {
 			return err
 		}
 		paused = true
 	}
 	defer func() {
 		if paused {
-			_ = exec.Command("docker", "unpause", containerName).Run()
+			_ = runDockerCommandOutput("unpause", containerName)
 		}
 	}()
 	_ = exec.Command("sync").Run()
-	cmd := runHostCommand("btrfs", "subvolume", "snapshot", "-r", cfg.MountDir, dest)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return runHostCommandOutput("btrfs", "subvolume", "snapshot", "-r", cfg.MountDir, dest)
 }
 
 func restoreHomeVolume(cfg homeVolumeConfig, tag string) error {
@@ -61,17 +55,11 @@ func restoreHomeVolume(cfg homeVolumeConfig, tag string) error {
 	}
 	rootPath := filepath.Join(cfg.RootMountDir, "@home")
 	if _, err := os.Stat(rootPath); err == nil {
-		cmd := runHostCommand("btrfs", "subvolume", "delete", rootPath)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
+		if err := runHostCommandOutput("btrfs", "subvolume", "delete", rootPath); err != nil {
 			return err
 		}
 	}
-	cmd := runHostCommand("btrfs", "subvolume", "snapshot", snapshot, rootPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := runHostCommandOutput("btrfs", "subvolume", "snapshot", snapshot, rootPath); err != nil {
 		return err
 	}
 	loop, err := findLoopDevice(cfg.FilePath)
