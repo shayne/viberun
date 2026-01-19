@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/viberun-logo.png" alt="viberun logo" width="240">
+  <img src="assets/viberun-logo.png" alt="viberun logo" width="320">
 </p>
 
 # viberun
