@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:25.10
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV VIBERUN_USER=viberun
@@ -36,7 +36,7 @@ RUN apt-get update \
 
 RUN useradd -m -d ${VIBERUN_HOME} -s /bin/bash ${VIBERUN_USER}
 
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
   && apt-get install -y --no-install-recommends nodejs \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*

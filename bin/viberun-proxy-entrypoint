@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+
+CONFIG_PATH="${VIBERUN_PROXY_CONFIG_PATH:-/var/lib/viberun/proxy.toml}"
+AUTH_ASSETS="${VIBERUN_AUTH_ASSETS:-/etc/viberun/auth}"
+
+/usr/local/bin/viberun-auth --config "$CONFIG_PATH" --assets "$AUTH_ASSETS" &
+
+exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile

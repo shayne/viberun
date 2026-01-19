@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/shayne/viberun/internal/hostcmd"
 )
 
 func snapshotContainer(containerName string, cfg homeVolumeConfig, tag string) error {
@@ -36,7 +38,7 @@ func snapshotContainer(containerName string, cfg homeVolumeConfig, tag string) e
 		}
 	}()
 	_ = exec.Command("sync").Run()
-	return runHostCommandOutput("btrfs", "subvolume", "snapshot", "-r", cfg.MountDir, dest)
+	return hostcmd.RunOutput("btrfs", "subvolume", "snapshot", "-r", cfg.MountDir, dest)
 }
 
 func restoreHomeVolume(cfg homeVolumeConfig, tag string) error {
@@ -51,15 +53,15 @@ func restoreHomeVolume(cfg homeVolumeConfig, tag string) error {
 		return err
 	}
 	if info, ok := mountInfoForTarget(cfg.MountDir); ok {
-		_ = runHostCommand("umount", info.Target).Run()
+		_ = hostcmd.Run("umount", info.Target).Run()
 	}
 	rootPath := filepath.Join(cfg.RootMountDir, "@home")
 	if _, err := os.Stat(rootPath); err == nil {
-		if err := runHostCommandOutput("btrfs", "subvolume", "delete", rootPath); err != nil {
+		if err := hostcmd.RunOutput("btrfs", "subvolume", "delete", rootPath); err != nil {
 			return err
 		}
 	}
-	if err := runHostCommandOutput("btrfs", "subvolume", "snapshot", snapshot, rootPath); err != nil {
+	if err := hostcmd.RunOutput("btrfs", "subvolume", "snapshot", snapshot, rootPath); err != nil {
 		return err
 	}
 	loop, err := findLoopDevice(cfg.FilePath)

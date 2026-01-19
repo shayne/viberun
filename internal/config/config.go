@@ -115,3 +115,19 @@ func loadLegacyJSON(path string) (Config, error) {
 	}
 	return cfg, nil
 }
+
+func RemoveConfigFiles() error {
+	paths := []string{}
+	if path, err := configPath(); err == nil {
+		paths = append(paths, path)
+	}
+	if path, err := legacyConfigPath(); err == nil {
+		paths = append(paths, path)
+	}
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}

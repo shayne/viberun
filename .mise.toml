@@ -1,6 +1,6 @@
 [tools]
-node = "latest"
-go = "1.25.5"
+node = "24.13.0"
+go = "1.25.6"
 pre-commit = "latest"
 staticcheck = "latest"
 
@@ -51,6 +51,20 @@ if [ -n "${IMAGE_LATEST:-}" ]; then
   docker build -t "$IMAGE" -t "$IMAGE_LATEST" .
 else
   docker build -t "$IMAGE" .
+fi
+docker push "$IMAGE"
+if [ -n "${IMAGE_LATEST:-}" ]; then
+  docker push "$IMAGE_LATEST"
+fi
+"""
+
+[tasks."release:push-proxy-image"]
+run = """
+: "${IMAGE:?IMAGE is required (e.g., ghcr.io/OWNER/REPO/viberun-proxy:TAG)}"
+if [ -n "${IMAGE_LATEST:-}" ]; then
+  docker build -f Dockerfile.proxy -t "$IMAGE" -t "$IMAGE_LATEST" .
+else
+  docker build -f Dockerfile.proxy -t "$IMAGE" .
 fi
 docker push "$IMAGE"
 if [ -n "${IMAGE_LATEST:-}" ]; then

@@ -20,6 +20,11 @@ If the user asks for a web app but does not mention running it as a service, ass
 5) Register the service with `vrctl service add <app> --cmd <executable> --arg <arg> ... --cwd /home/viberun/app --env PORT=8080 --env HOST=0.0.0.0`.
 5) Wait briefly (1–2s), then verify with `vrctl service status <app>` and `vrctl service logs <app> -n 200`.
 6) Mention that vrctl keeps the service running on container restarts.
+7) After the service is confirmed healthy:
+   - If `VIBERUN_PUBLIC_URL` is set, prefer that URL and open it. Mention it is private by default unless made public.
+   - If no public URL is set, ask if the user wants to make it public:
+     - If yes, tell them to run `viberun <app> url --make-public` from their laptop.
+     - If no, say: “You can do this later from your laptop with `viberun <app> url --make-public`.”
 
 ## vrctl template
 ```
@@ -78,10 +83,12 @@ vrctl service add <app> \
 
 ## User-facing notes
 - Treat the host port as the only user-facing port; do not mention 8080 unless the user explicitly asks.
-- Always include the concrete local URL derived from the environment.
+- Prefer the public URL when `VIBERUN_PUBLIC_URL` is set; open it first.
+- If public URL is set, say it is private by default and can be made public with `viberun <app> url --make-public`.
+- Always include the concrete local URL derived from `VIBERUN_HOST_PORT` as a fallback.
 - Use `printenv VIBERUN_HOST_PORT` (or `echo "$VIBERUN_HOST_PORT"`) to read it, then say:
   - `Open http://localhost:<port> in your laptop browser while this session is active.`
-- After verifying the service is responding, read `VIBERUN_HOST_PORT` (e.g., `port="$(printenv VIBERUN_HOST_PORT)"`) and run `xdg-open "http://localhost:${port}"` once.
+- After verifying the service is responding, if no public URL is available, run `xdg-open "http://localhost:${port}"` once.
 - Keep user-facing instructions non-technical; do not mention vrctl or s6 unless the user asks.
 
 ## Default hello-world behavior

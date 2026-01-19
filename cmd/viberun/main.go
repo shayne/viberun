@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,9 +26,13 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
+	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/creack/pty"
 	"golang.org/x/term"
 
@@ -35,6 +40,7 @@ import (
 	"github.com/shayne/viberun/internal/agents"
 	"github.com/shayne/viberun/internal/clipboard"
 	"github.com/shayne/viberun/internal/config"
+	"github.com/shayne/viberun/internal/proxy"
 	"github.com/shayne/viberun/internal/sshcmd"
 	"github.com/shayne/viberun/internal/target"
 	"github.com/shayne/viberun/internal/tui"
@@ -54,12 +60,20 @@ var (
 	buildDate = ""
 )
 
+var devServerSync = struct {
+	mu    sync.Mutex
+	hosts map[string]bool
+}{}
+
 func runCLI() error {
 	args := ensureRunSubcommand(normalizeArgs(os.Args[1:]))
 	handlers := map[string]yargs.SubcommandHandler{
 		"run":       handleRunCommand,
 		"config":    handleConfigCommand,
 		"bootstrap": handleBootstrapCommand,
+		"proxy":     handleProxyCommand,
+		"users":     handleUsersCommand,
+		"wipe":      handleWipeCommand,
 		"version":   handleVersionCommand,
 	}
 	if err := yargs.RunSubcommands(context.Background(), args, helpConfig, struct{}{}, handlers); err != nil {
@@ -76,11 +90,18 @@ type runFlags struct {
 	ForwardAgent bool   `flag:"forward-agent" short:"A" help:"forward local SSH agent into the container"`
 	Delete       bool   `flag:"delete" help:"delete the app and snapshots (alias: --remove)"`
 	Yes          bool   `flag:"yes" short:"y" help:"skip confirmation prompts"`
+	Open         bool   `flag:"open" help:"open the public URL in a browser (url command only)"`
+	MakePublic   bool   `flag:"make-public" help:"make the app URL public (url command only)"`
+	MakePrivate  bool   `flag:"make-private" help:"make the app URL private (url command only)"`
+	DisableURL   bool   `flag:"disable" help:"disable the public URL (url command only)"`
+	EnableURL    bool   `flag:"enable" help:"enable the public URL (url command only)"`
+	Domain       string `flag:"domain" help:"set a custom domain for the app URL (url command only)"`
+	ClearDomain  bool   `flag:"clear-domain" help:"clear the custom domain (url command only)"`
 }
 
 type runArgs struct {
 	Target string `pos:"0" help:"app or app@host"`
-	Action string `pos:"1?" help:"snapshot|snapshots|restore|update|shell"`
+	Action string `pos:"1?" help:"snapshot|snapshots|restore|update|shell|url|users"`
 	Value  string `pos:"2?" help:"snapshot name for restore"`
 }
 
@@ -101,6 +122,20 @@ type bootstrapArgs struct {
 	Host string `pos:"0?" help:"host to bootstrap"`
 }
 
+type proxyArgs struct {
+	Action string `pos:"0?" help:"setup"`
+	Host   string `pos:"1?" help:"host to configure"`
+}
+
+type usersArgs struct {
+	Action string `pos:"0?" help:"list|add|remove|set-password"`
+	Host   string `pos:"1?" help:"host to configure"`
+}
+
+type wipeArgs struct {
+	Host string `pos:"0?" help:"host to wipe"`
+}
+
 var helpConfig = yargs.HelpConfig{
 	Command: yargs.CommandInfo{
 		Name:        "viberun",
@@ -113,20 +148,26 @@ var helpConfig = yargs.HelpConfig{
 			"viberun myapp snapshot",
 			"viberun myapp restore latest",
 			"viberun myapp shell",
+			"viberun myapp url",
+			"viberun myapp users",
 			"viberun config --host myhost --agent codex",
 			"viberun bootstrap root@1.2.3.4",
+			"viberun proxy setup",
+			"viberun users list",
+			"viberun wipe",
 		},
 	},
 	SubCommands: map[string]yargs.SubCommandInfo{
 		"run": {
 			Name:        "run",
 			Description: "Run or manage an app session",
-			Usage:       "<app> [snapshot|snapshots|restore <snapshot>|update|shell]",
+			Usage:       "<app> [snapshot|snapshots|restore <snapshot>|update|shell|url]",
 			Examples: []string{
 				"viberun myapp",
 				"viberun myapp snapshot",
 				"viberun myapp restore latest",
 				"viberun myapp shell",
+				"viberun myapp url",
 				"viberun myapp --delete -y",
 			},
 			Hidden: true,
@@ -138,6 +179,21 @@ var helpConfig = yargs.HelpConfig{
 		"bootstrap": {
 			Name:        "bootstrap",
 			Description: "Install or update the host-side server and image",
+			Usage:       "[<host>]",
+		},
+		"proxy": {
+			Name:        "proxy",
+			Description: "Configure public URLs via the host proxy",
+			Usage:       "setup [<host>]",
+		},
+		"users": {
+			Name:        "users",
+			Description: "Manage public URL users",
+			Usage:       "list | add --username <u> | remove --username <u> | set-password --username <u>",
+		},
+		"wipe": {
+			Name:        "wipe",
+			Description: "Wipe local config and all viberun state on a host",
 			Usage:       "[<host>]",
 		},
 		"version": {
@@ -182,7 +238,7 @@ func rewriteHelpArgs(args []string) []string {
 
 func isKnownCommand(value string) bool {
 	switch value {
-	case "run", "config", "bootstrap", "version":
+	case "run", "config", "bootstrap", "proxy", "users", "wipe", "version":
 		return true
 	default:
 		return false
@@ -421,7 +477,7 @@ func handleBootstrap(args []string) {
 	defer ui.Stop()
 
 	env := []string{}
-	for _, key := range []string{"VIBERUN_IMAGE", "VIBERUN_SERVER_VERSION", "VIBERUN_SERVER_REPO"} {
+	for _, key := range []string{"VIBERUN_IMAGE", "VIBERUN_PROXY_IMAGE", "VIBERUN_SERVER_VERSION", "VIBERUN_SERVER_REPO"} {
 		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
 			env = append(env, key+"="+value)
 		}
@@ -432,7 +488,7 @@ func handleBootstrap(args []string) {
 	if strings.TrimSpace(localPath) != "" {
 		localBootstrap = true
 	}
-	if isDevRun() {
+	if isDevRun() || isDevVersion() {
 		if !localBootstrap && strings.TrimSpace(localPath) == "" {
 			localBootstrap = true
 		}
@@ -458,6 +514,16 @@ func handleBootstrap(args []string) {
 			ui.Resume()
 			ui.Fail(err.Error())
 			fmt.Fprintf(os.Stderr, "failed to stage local image: %v\n", err)
+			os.Exit(1)
+		}
+		ui.Resume()
+		ui.Done("")
+		ui.Step("Build proxy image")
+		ui.Suspend()
+		if err := stageLocalProxyImage(resolved.Host); err != nil {
+			ui.Resume()
+			ui.Fail(err.Error())
+			fmt.Fprintf(os.Stderr, "failed to stage local proxy image: %v\n", err)
 			os.Exit(1)
 		}
 		ui.Resume()
@@ -501,7 +567,854 @@ func handleBootstrap(args []string) {
 			fmt.Fprintf(os.Stdout, "default host set to %s\n", hostArg)
 		}
 	}
+	if tty {
+		if promptProxySetup() {
+			if err := runProxySetupFlow(resolved.Host); err != nil {
+				fmt.Fprintf(os.Stderr, "proxy setup failed: %v\n", err)
+			}
+		} else {
+			fmt.Fprintln(os.Stdout, "Set up public URLs later with: viberun proxy setup")
+		}
+	}
 	fmt.Fprintln(os.Stdout, "Bootstrap complete.")
+}
+
+func handleProxyCommand(_ context.Context, args []string) error {
+	handleProxy(args)
+	return nil
+}
+
+func handleUsersCommand(_ context.Context, args []string) error {
+	handleUsers(args)
+	return nil
+}
+
+func handleWipeCommand(_ context.Context, args []string) error {
+	handleWipe(args)
+	return nil
+}
+
+func handleProxy(args []string) {
+	result, err := yargs.ParseAndHandleHelp[struct{}, struct{}, proxyArgs](args, helpConfig)
+	if errors.Is(err, yargs.ErrShown) {
+		return
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(2)
+	}
+	action := strings.TrimSpace(result.Args.Action)
+	if action == "" || action != "setup" {
+		exitUsage("Usage: viberun proxy setup [<host>]")
+	}
+	hostArg := strings.TrimSpace(result.Args.Host)
+
+	cfg, _, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	resolved, err := target.ResolveHost(hostArg, cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid host: %v\n", err)
+		os.Exit(2)
+	}
+
+	if _, err := exec.LookPath("ssh"); err != nil {
+		fmt.Fprintln(os.Stderr, "ssh is required but was not found in PATH")
+		os.Exit(1)
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		fmt.Fprintln(os.Stderr, "proxy setup requires a TTY")
+		os.Exit(1)
+	}
+	if err := ensureDevServerSynced(resolved.Host); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to sync dev server: %v\n", err)
+		os.Exit(1)
+	}
+	if err := runProxySetupFlow(resolved.Host); err != nil {
+		fmt.Fprintf(os.Stderr, "proxy setup failed: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+type usersFlags struct {
+	Username string `flag:"username" help:"username"`
+}
+
+func handleUsers(args []string) {
+	result, err := yargs.ParseAndHandleHelp[struct{}, struct{}, usersArgs](args, helpConfig)
+	if errors.Is(err, yargs.ErrShown) {
+		return
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(2)
+	}
+	action := strings.TrimSpace(result.Args.Action)
+	if action == "" {
+		exitUsage("Usage: viberun users list|add|remove|set-password [<host>]")
+	}
+	hostArg := strings.TrimSpace(result.Args.Host)
+
+	cfg, _, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+	resolved, err := target.ResolveHost(hostArg, cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid host: %v\n", err)
+		os.Exit(2)
+	}
+
+	if _, err := exec.LookPath("ssh"); err != nil {
+		fmt.Fprintln(os.Stderr, "ssh is required but was not found in PATH")
+		os.Exit(1)
+	}
+	if err := ensureDevServerSynced(resolved.Host); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to sync dev server: %v\n", err)
+		os.Exit(1)
+	}
+
+	switch action {
+	case "list":
+		if err := runRemoteUsersList(resolved.Host); err != nil {
+			fmt.Fprintf(os.Stderr, "users list failed: %v\n", err)
+			os.Exit(1)
+		}
+	case "add", "set-password", "remove":
+		parsed, err := yargs.ParseFlags[usersFlags](args[1:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(2)
+		}
+		username := strings.TrimSpace(parsed.Flags.Username)
+		if username == "" {
+			fmt.Fprintln(os.Stderr, "username is required")
+			os.Exit(2)
+		}
+		if action == "remove" {
+			if err := runRemoteUsersRemove(resolved.Host, username); err != nil {
+				fmt.Fprintf(os.Stderr, "users remove failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+			fmt.Fprintln(os.Stderr, "user management requires a TTY")
+			os.Exit(1)
+		}
+		password, err := tui.PromptPassword(os.Stdin, os.Stdout, "Password")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to read password: %v\n", err)
+			os.Exit(1)
+		}
+		if action == "add" {
+			if err := runRemoteUsersAdd(resolved.Host, username, password); err != nil {
+				fmt.Fprintf(os.Stderr, "users add failed: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			if err := runRemoteUsersSetPassword(resolved.Host, username, password); err != nil {
+				fmt.Fprintf(os.Stderr, "users set-password failed: %v\n", err)
+				os.Exit(1)
+			}
+		}
+	default:
+		exitUsage("Usage: viberun users list|add|remove|set-password [<host>]")
+	}
+}
+
+func handleWipe(args []string) {
+	result, err := yargs.ParseAndHandleHelp[struct{}, struct{}, wipeArgs](args, helpConfig)
+	if errors.Is(err, yargs.ErrShown) {
+		return
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(2)
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		fmt.Fprintln(os.Stderr, "wipe requires a TTY")
+		os.Exit(1)
+	}
+	cfg, _, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+	resolved, err := target.ResolveHost(strings.TrimSpace(result.Args.Host), cfg)
+	if err != nil {
+		if errors.Is(err, target.ErrNoHostConfigured) {
+			printMissingHostMessage()
+			os.Exit(2)
+		}
+		fmt.Fprintf(os.Stderr, "invalid host: %v\n", err)
+		os.Exit(2)
+	}
+	if _, err := exec.LookPath("ssh"); err != nil {
+		fmt.Fprintln(os.Stderr, "ssh is required but was not found in PATH")
+		os.Exit(1)
+	}
+	if err := ensureDevServerSynced(resolved.Host); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to sync dev server: %v\n", err)
+		os.Exit(1)
+	}
+	if err := tui.PromptWipeConfirm(os.Stdin, os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "wipe cancelled: %v\n", err)
+		os.Exit(1)
+	}
+	if err := runRemoteWipe(resolved.Host); err != nil {
+		fmt.Fprintf(os.Stderr, "remote wipe failed: %v\n", err)
+		os.Exit(1)
+	}
+	if err := config.RemoveConfigFiles(); err != nil {
+		fmt.Fprintf(os.Stderr, "local wipe failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintln(os.Stdout, "Wipe complete.")
+}
+
+func promptProxySetup() bool {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Fprint(os.Stdout, "Set up public internet URLs? [y/N]: ")
+	input, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return false
+	}
+	input = strings.TrimSpace(strings.ToLower(input))
+	return input == "y" || input == "yes"
+}
+
+func runProxySetupFlow(host string) error {
+	if err := ensureDevServerSynced(host); err != nil {
+		return err
+	}
+	proxyImage := ""
+	if isDevRun() || isDevVersion() {
+		if err := stageLocalProxyImage(host); err != nil {
+			return err
+		}
+		proxyImage = devProxyImageTag()
+	}
+	publicIP, err := fetchRemotePublicIP(host)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "Detected public IP: %s\n", publicIP)
+	domain, err := tui.PromptProxyDomain(os.Stdin, os.Stdout, "myapp.")
+	if err != nil {
+		return err
+	}
+	username, password, err := tui.PromptProxyAuth(os.Stdin, os.Stdout, "")
+	if err != nil {
+		return err
+	}
+	if err := runRemoteProxySetup(host, domain, publicIP, username, password, proxyImage); err != nil {
+		return err
+	}
+	printProxySetupInstructions(domain, publicIP, username)
+	if err := promptRecreateApps(host); err != nil {
+		return err
+	}
+	return nil
+}
+
+func printProxySetupInstructions(domain string, publicIP string, username string) {
+	fmt.Fprintln(os.Stdout, "DNS setup:")
+	fmt.Fprintf(os.Stdout, "  Create an A record for *.%s pointing to %s\n", domain, publicIP)
+	fmt.Fprintf(os.Stdout, "  Example URL: https://myapp.%s\n", domain)
+	if strings.TrimSpace(username) != "" {
+		fmt.Fprintln(os.Stdout, "Access:")
+		fmt.Fprintln(os.Stdout, "  URLs are private by default.")
+		fmt.Fprintf(os.Stdout, "  Log in as %s with the password you just set.\n", username)
+	}
+	fmt.Fprintln(os.Stdout, "Firewall:")
+	fmt.Fprintln(os.Stdout, "  Ensure ports 80 and 443 are open to the internet.")
+}
+
+func fetchRemotePublicIP(host string) (string, error) {
+	ip, err := fetchRemoteIPFrom(host, "https://ipinfo.io/ip")
+	if err == nil {
+		return ip, nil
+	}
+	fallbackErr := err
+	ip, err = fetchRemoteIPFrom(host, "https://api.ipify.org")
+	if err == nil {
+		return ip, nil
+	}
+	return "", fmt.Errorf("failed to fetch public IP: %v; fallback failed: %v", fallbackErr, err)
+}
+
+func runRemoteProxySetup(host string, domain string, publicIP string, username string, password string, proxyImage string) error {
+	remoteArgs := []string{"/usr/local/bin/viberun-server", "proxy", "setup", "--domain", domain, "--public-ip", publicIP, "--username", username, "--password-stdin"}
+	if strings.TrimSpace(proxyImage) != "" {
+		remoteArgs = append(remoteArgs, "--proxy-image", proxyImage)
+	}
+	remoteArgs = sshcmd.WithSudo(host, remoteArgs)
+	sshArgs := sshcmd.BuildArgs(host, remoteArgs, false)
+	sshArgs = append([]string{"-o", "LogLevel=ERROR"}, sshArgs...)
+	cmd := exec.Command("ssh", sshArgs...)
+	cmd.Env = normalizedSshEnv()
+	cmd.Stdin = strings.NewReader(password + "\n")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		trimmed := strings.TrimSpace(string(output))
+		lower := strings.ToLower(trimmed)
+		if strings.Contains(lower, "unknown flag: --domain") ||
+			strings.Contains(lower, "unknown flag: --public-ip") ||
+			strings.Contains(lower, "unknown flag: --username") ||
+			strings.Contains(lower, "unknown flag: --password-stdin") ||
+			strings.Contains(lower, "unknown flag: --proxy-image") {
+			return fmt.Errorf("remote viberun-server is out of date; re-run bootstrap to update it (e.g. `viberun bootstrap --local %s`)", host)
+		}
+		if trimmed == "" {
+			trimmed = err.Error()
+		}
+		return fmt.Errorf("%s", trimmed)
+	}
+	return nil
+}
+
+func fetchRemoteIPFrom(host string, url string) (string, error) {
+	output, err := runRemoteCommand(host, []string{"curl", "-fsSL", url})
+	if err != nil {
+		return "", fmt.Errorf("curl %s failed: %v", url, err)
+	}
+	ip := strings.TrimSpace(output)
+	if net.ParseIP(ip) == nil {
+		return "", fmt.Errorf("unexpected public IP response: %q", ip)
+	}
+	return ip, nil
+}
+
+func runRemoteCommand(host string, remoteArgs []string) (string, error) {
+	sshArgs := sshcmd.BuildArgs(host, remoteArgs, false)
+	sshArgs = append([]string{"-o", "LogLevel=ERROR"}, sshArgs...)
+	cmd := exec.Command("ssh", sshArgs...)
+	cmd.Env = normalizedSshEnv()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		trimmed := strings.TrimSpace(string(output))
+		if trimmed == "" {
+			return "", err
+		}
+		return "", fmt.Errorf("%s", trimmed)
+	}
+	return string(output), nil
+}
+
+func runRemoteCommandWithInput(host string, remoteArgs []string, input io.Reader) (string, error) {
+	sshArgs := sshcmd.BuildArgs(host, remoteArgs, false)
+	sshArgs = append([]string{"-o", "LogLevel=ERROR"}, sshArgs...)
+	cmd := exec.Command("ssh", sshArgs...)
+	cmd.Env = normalizedSshEnv()
+	if input != nil {
+		cmd.Stdin = input
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		trimmed := strings.TrimSpace(string(output))
+		if trimmed == "" {
+			return "", err
+		}
+		return "", fmt.Errorf("%s", trimmed)
+	}
+	return string(output), nil
+}
+
+type proxyInfo struct {
+	App          string   `json:"app"`
+	URL          string   `json:"url"`
+	Access       string   `json:"access"`
+	Disabled     bool     `json:"disabled"`
+	CustomDomain string   `json:"custom_domain"`
+	AllowedUsers []string `json:"allowed_users"`
+	PrimaryUser  string   `json:"primary_user"`
+	Users        []string `json:"users"`
+	BaseDomain   string   `json:"base_domain"`
+	PublicIP     string   `json:"public_ip"`
+	Enabled      bool     `json:"enabled"`
+}
+
+func fetchProxyInfo(resolved target.Resolved) (proxyInfo, error) {
+	remoteArgs := []string{"viberun-server", "proxy", "info", resolved.App}
+	remoteArgs = sshcmd.WithSudo(resolved.Host, remoteArgs)
+	output, err := runRemoteCommandWithInput(resolved.Host, remoteArgs, nil)
+	if err != nil {
+		return proxyInfo{}, err
+	}
+	var info proxyInfo
+	if err := json.Unmarshal([]byte(output), &info); err != nil {
+		return proxyInfo{}, fmt.Errorf("failed to parse proxy info: %w", err)
+	}
+	return info, nil
+}
+
+func runRemoteUsersList(host string) error {
+	output, err := runRemoteCommandWithInput(host, sshcmd.WithSudo(host, []string{"viberun-server", "proxy", "users", "list"}), nil)
+	if err != nil {
+		return err
+	}
+	fmt.Fprint(os.Stdout, output)
+	return nil
+}
+
+func runRemoteUsersAdd(host string, username string, password string) error {
+	args := []string{"viberun-server", "proxy", "users", "add", "--username", username, "--password-stdin"}
+	_, err := runRemoteCommandWithInput(host, sshcmd.WithSudo(host, args), strings.NewReader(password+"\n"))
+	return err
+}
+
+func runRemoteUsersRemove(host string, username string) error {
+	args := []string{"viberun-server", "proxy", "users", "remove", "--username", username}
+	_, err := runRemoteCommandWithInput(host, sshcmd.WithSudo(host, args), nil)
+	return err
+}
+
+func runRemoteUsersSetPassword(host string, username string, password string) error {
+	args := []string{"viberun-server", "proxy", "users", "set-password", "--username", username, "--password-stdin"}
+	_, err := runRemoteCommandWithInput(host, sshcmd.WithSudo(host, args), strings.NewReader(password+"\n"))
+	return err
+}
+
+func runRemoteWipe(host string) error {
+	args := sshcmd.WithSudo(host, []string{"viberun-server", "wipe"})
+	_, err := runRemoteCommandWithInput(host, args, nil)
+	return err
+}
+
+func runRemoteAppsList(host string) ([]string, error) {
+	output, err := runRemoteCommandWithInput(host, sshcmd.WithSudo(host, []string{"viberun-server", "apps"}), nil)
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	apps := make([]string, 0, len(lines))
+	for _, line := range lines {
+		name := strings.TrimSpace(line)
+		if name == "" {
+			continue
+		}
+		apps = append(apps, name)
+	}
+	return apps, nil
+}
+
+func runRemoteAppUpdate(host string, app string) error {
+	app = strings.TrimSpace(app)
+	if app == "" {
+		return fmt.Errorf("app name is required")
+	}
+	if isDevRun() || isDevVersion() {
+		if err := stageLocalImage(host); err != nil {
+			return err
+		}
+	}
+	remoteArgs := []string{"viberun-server", app, "update"}
+	if isDevRun() || isDevVersion() {
+		remoteArgs = append([]string{"env", "VIBERUN_SKIP_IMAGE_PULL=1"}, remoteArgs...)
+	}
+	remoteArgs = sshcmd.WithSudo(host, remoteArgs)
+	tty := term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+	sshArgs := sshcmd.BuildArgs(host, remoteArgs, tty)
+	sshArgs = append([]string{"-o", "LogLevel=ERROR"}, sshArgs...)
+	cmd := exec.Command("ssh", sshArgs...)
+	cmd.Env = normalizedSshEnv()
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func runRemoteSetAccess(host string, app string, access string) error {
+	args := []string{"viberun-server", "proxy", "set-access", app, "--access", access}
+	_, err := runRemoteCommandWithInput(host, sshcmd.WithSudo(host, args), nil)
+	return err
+}
+
+func runRemoteSetDomain(host string, app string, domain string, clear bool) error {
+	args := []string{"viberun-server", "proxy", "set-domain", app}
+	if clear {
+		args = append(args, "--clear")
+	} else {
+		args = append(args, "--domain", domain)
+	}
+	_, err := runRemoteCommandWithInput(host, sshcmd.WithSudo(host, args), nil)
+	return err
+}
+
+func runRemoteSetDisabled(host string, app string, disabled bool) error {
+	args := []string{"viberun-server", "proxy", "set-disabled", app}
+	if disabled {
+		args = append(args, "--disabled")
+	} else {
+		args = append(args, "--enabled")
+	}
+	_, err := runRemoteCommandWithInput(host, sshcmd.WithSudo(host, args), nil)
+	return err
+}
+
+func runRemoteSetUsers(host string, app string, users []string) error {
+	joined := strings.Join(users, ",")
+	args := []string{"viberun-server", "proxy", "set-users", app, "--users", joined}
+	_, err := runRemoteCommandWithInput(host, sshcmd.WithSudo(host, args), nil)
+	return err
+}
+
+func applyURLUpdates(resolved target.Resolved, flags runFlags) error {
+	if flags.MakePublic && flags.MakePrivate {
+		return fmt.Errorf("choose either --make-public or --make-private")
+	}
+	if flags.DisableURL && flags.EnableURL {
+		return fmt.Errorf("choose either --disable or --enable")
+	}
+	if flags.Domain != "" && flags.ClearDomain {
+		return fmt.Errorf("choose either --domain or --clear-domain")
+	}
+	if flags.MakePublic {
+		if err := runRemoteSetAccess(resolved.Host, resolved.App, "public"); err != nil {
+			return err
+		}
+	}
+	if flags.MakePrivate {
+		if err := runRemoteSetAccess(resolved.Host, resolved.App, "private"); err != nil {
+			return err
+		}
+	}
+	if flags.DisableURL {
+		if err := runRemoteSetDisabled(resolved.Host, resolved.App, true); err != nil {
+			return err
+		}
+	}
+	if flags.EnableURL {
+		if err := runRemoteSetDisabled(resolved.Host, resolved.App, false); err != nil {
+			return err
+		}
+	}
+	if flags.Domain != "" {
+		if err := runRemoteSetDomain(resolved.Host, resolved.App, flags.Domain, false); err != nil {
+			return err
+		}
+	}
+	if flags.ClearDomain {
+		if err := runRemoteSetDomain(resolved.Host, resolved.App, "", true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func promptRecreateApps(host string) error {
+	apps, err := runRemoteAppsList(host)
+	if err != nil {
+		return err
+	}
+	if len(apps) == 0 {
+		return nil
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		fmt.Fprintln(os.Stdout, "Public URLs changed. Re-run `viberun <app> update` to refresh environment variables.")
+		return nil
+	}
+	prompt := fmt.Sprintf("Recreate %d app container(s) to set public URL env vars? [Y/n]: ", len(apps))
+	if !promptYesNoDefaultYes(prompt) {
+		return nil
+	}
+	for _, app := range apps {
+		fmt.Fprintf(os.Stdout, "Updating %s...\n", app)
+		if err := runRemoteAppUpdate(host, app); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func maybeRecreateAppForURLChange(resolved target.Resolved, before proxyInfo, after proxyInfo) error {
+	if before.URL == after.URL {
+		return nil
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		fmt.Fprintf(os.Stdout, "Public URL changed for %s. Run `viberun %s update` to refresh environment variables.\n", resolved.App, resolved.App)
+		return nil
+	}
+	prompt := fmt.Sprintf("Public URL changed for %s. Recreate container to update env vars? [Y/n]: ", resolved.App)
+	if !promptYesNoDefaultYes(prompt) {
+		return nil
+	}
+	return runRemoteAppUpdate(resolved.Host, resolved.App)
+}
+
+func printURLSummary(out io.Writer, info proxyInfo) {
+	styler := newURLStyler(out)
+	fmt.Fprintf(out, "%s %s\n", styler.label("App:"), styler.value(info.App))
+	if info.Disabled {
+		fmt.Fprintf(out, "%s %s\n", styler.label("Status:"), styler.status("disabled (no public URL)"))
+	} else if info.Access == "public" {
+		fmt.Fprintf(out, "%s %s\n", styler.label("Status:"), styler.status("public"))
+	} else {
+		fmt.Fprintf(out, "%s %s\n", styler.label("Status:"), styler.status("private"))
+	}
+	if info.URL != "" {
+		fmt.Fprintf(out, "%s %s\n", styler.label("URL:"), styler.link(info.URL))
+	}
+	if info.URL != "" && info.PublicIP != "" {
+		host := strings.TrimPrefix(info.URL, "https://")
+		host = strings.TrimPrefix(host, "http://")
+		if host != "" {
+			fmt.Fprintf(out, "%s %s\n", styler.label("DNS:"), styler.dnsLine(host, info.PublicIP))
+		}
+	}
+	if info.CustomDomain != "" {
+		fmt.Fprintf(out, "%s %s\n", styler.label("Custom domain:"), styler.value(info.CustomDomain))
+	}
+	if len(info.AllowedUsers) > 0 {
+		fmt.Fprintf(out, "%s %s\n", styler.label("Users:"), styler.value(strings.Join(info.AllowedUsers, ", ")))
+	}
+	fmt.Fprintln(out, "")
+	fmt.Fprintln(out, styler.header("Commands:"))
+	styler.commands(out, []commandLine{
+		{cmd: fmt.Sprintf("viberun %s url --domain <domain>", info.App), desc: "set a custom domain"},
+		{cmd: fmt.Sprintf("viberun %s url --clear-domain", info.App), desc: "clear the custom domain"},
+		{cmd: fmt.Sprintf("viberun %s users", info.App), desc: "manage who can access this app"},
+		{cmd: fmt.Sprintf("viberun %s url --make-public", info.App), desc: "allow anyone to access"},
+		{cmd: fmt.Sprintf("viberun %s url --make-private", info.App), desc: "require login to access"},
+		{cmd: fmt.Sprintf("viberun %s url --disable", info.App), desc: "turn off the public URL"},
+		{cmd: fmt.Sprintf("viberun %s url --enable", info.App), desc: "turn the public URL back on"},
+	})
+}
+
+func printURLActionResult(out io.Writer, info proxyInfo) {
+	styler := newURLStyler(out)
+	status := "private"
+	if info.Disabled {
+		status = "disabled"
+	} else if info.Access == "public" {
+		status = "public"
+	}
+	if info.URL != "" && !info.Disabled {
+		fmt.Fprintf(out, "%s %s %s\n", styler.value(info.App+":"), styler.status(status), styler.value(fmt.Sprintf("(%s)", info.URL)))
+		return
+	}
+	fmt.Fprintf(out, "%s %s\n", styler.value(info.App+":"), styler.status(status))
+}
+
+type urlStyler struct {
+	enabled       bool
+	labelStyle    lipgloss.Style
+	valueStyle    lipgloss.Style
+	headerStyle   lipgloss.Style
+	commandStyle  lipgloss.Style
+	commentStyle  lipgloss.Style
+	linkStyle     lipgloss.Style
+	publicStyle   lipgloss.Style
+	privateStyle  lipgloss.Style
+	disabledStyle lipgloss.Style
+	ipStyle       lipgloss.Style
+}
+
+type commandLine struct {
+	cmd  string
+	desc string
+}
+
+func newURLStyler(out io.Writer) urlStyler {
+	if !wantPrettyOutput(out) {
+		return urlStyler{}
+	}
+	fuchsia := lipgloss.AdaptiveColor{Light: "#B0005A", Dark: "#FF5CB0"}
+	command := lipgloss.AdaptiveColor{Light: "#005A9C", Dark: "#7AB8FF"}
+	link := lipgloss.AdaptiveColor{Light: "#0A66C2", Dark: "#7AB8FF"}
+	muted := lipgloss.AdaptiveColor{Light: "#6E6E6E", Dark: "#9CA3AF"}
+	value := lipgloss.AdaptiveColor{Light: "#121212", Dark: "#E7E7E7"}
+	return urlStyler{
+		enabled:       true,
+		labelStyle:    lipgloss.NewStyle().Foreground(muted),
+		valueStyle:    lipgloss.NewStyle().Foreground(value),
+		headerStyle:   lipgloss.NewStyle().Bold(true).Foreground(fuchsia),
+		commandStyle:  lipgloss.NewStyle().Foreground(command),
+		commentStyle:  lipgloss.NewStyle().Foreground(muted),
+		linkStyle:     lipgloss.NewStyle().Foreground(link).Underline(true),
+		publicStyle:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#1F7A1F", Dark: "#7EE787"}),
+		privateStyle:  lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#9A6B00", Dark: "#F2C14E"}),
+		disabledStyle: lipgloss.NewStyle().Bold(true).Foreground(muted),
+		ipStyle:       lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#1F7A1F", Dark: "#7EE787"}),
+	}
+}
+
+func (s urlStyler) label(text string) string {
+	if !s.enabled {
+		return text
+	}
+	return s.labelStyle.Render(text)
+}
+
+func (s urlStyler) value(text string) string {
+	if !s.enabled {
+		return text
+	}
+	return s.valueStyle.Render(text)
+}
+
+func (s urlStyler) link(text string) string {
+	if !s.enabled {
+		return text
+	}
+	return s.linkStyle.Render(text)
+}
+
+func (s urlStyler) dnsLine(host string, ip string) string {
+	if !s.enabled {
+		return fmt.Sprintf("create an A record for %s -> %s", host, ip)
+	}
+	return fmt.Sprintf("create an A record for %s -> %s", s.linkStyle.Render(host), s.ipStyle.Render(ip))
+}
+
+func (s urlStyler) header(text string) string {
+	if !s.enabled {
+		return text
+	}
+	return s.headerStyle.Render(text)
+}
+
+func (s urlStyler) status(text string) string {
+	if !s.enabled {
+		return text
+	}
+	switch text {
+	case "public":
+		return s.publicStyle.Render(text)
+	case "private":
+		return s.privateStyle.Render(text)
+	case "disabled", "disabled (no public URL)":
+		return s.disabledStyle.Render(text)
+	default:
+		return s.valueStyle.Render(text)
+	}
+}
+
+func (s urlStyler) commands(out io.Writer, lines []commandLine) {
+	if len(lines) == 0 {
+		return
+	}
+	maxWidth := 0
+	for _, line := range lines {
+		width := utf8.RuneCountInString(line.cmd)
+		if width > maxWidth {
+			maxWidth = width
+		}
+	}
+	for _, line := range lines {
+		padding := maxWidth - utf8.RuneCountInString(line.cmd)
+		if padding < 0 {
+			padding = 0
+		}
+		cmd := line.cmd + strings.Repeat(" ", padding)
+		comment := "# " + line.desc
+		if s.enabled {
+			fmt.Fprintf(out, "  %s  %s\n", s.commandStyle.Render(cmd), s.commentStyle.Render(comment))
+			continue
+		}
+		fmt.Fprintf(out, "  %s  %s\n", cmd, comment)
+	}
+}
+
+func wantPrettyOutput(out io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	termValue := os.Getenv("TERM")
+	if termValue == "" || termValue == "dumb" {
+		return false
+	}
+	file, ok := out.(*os.File)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(file.Fd()))
+}
+
+func runUsersEditor(resolved target.Resolved, info proxyInfo) (bool, error) {
+	primary := strings.TrimSpace(info.PrimaryUser)
+	secondaryOptions := make([]huh.Option[string], 0, len(info.Users))
+	selected := make([]string, 0, len(info.AllowedUsers))
+	allowed := map[string]bool{}
+	for _, user := range info.AllowedUsers {
+		allowed[user] = true
+	}
+	for _, user := range info.Users {
+		if strings.EqualFold(user, primary) {
+			continue
+		}
+		option := huh.NewOption(user, user)
+		if allowed[user] {
+			option = option.Selected(true)
+			selected = append(selected, user)
+		}
+		secondaryOptions = append(secondaryOptions, option)
+	}
+	if len(secondaryOptions) == 0 {
+		fmt.Fprintln(os.Stdout, "No secondary users configured. Add one with: viberun users add --username <u>")
+		return false, nil
+	}
+	title := "Users with access"
+	desc := "Primary user " + primary + " always has access. Clear all to reset to primary only."
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title(title).
+				Description(desc).
+				Options(secondaryOptions...).
+				Value(&selected),
+		),
+	)
+	form.WithInput(os.Stdin).WithOutput(os.Stdout).WithTheme(huh.ThemeCharm())
+	if err := form.Run(); err != nil {
+		return false, err
+	}
+	selected = proxy.NormalizeUserList(selected)
+	if sameStringSet(selected, filterSecondary(info.AllowedUsers, primary)) {
+		return false, nil
+	}
+	if err := runRemoteSetUsers(resolved.Host, resolved.App, selected); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func filterSecondary(users []string, primary string) []string {
+	out := make([]string, 0, len(users))
+	for _, user := range users {
+		if strings.EqualFold(user, primary) {
+			continue
+		}
+		out = append(out, user)
+	}
+	return proxy.NormalizeUserList(out)
+}
+
+func sameStringSet(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := map[string]int{}
+	for _, val := range a {
+		seen[val]++
+	}
+	for _, val := range b {
+		if seen[val] == 0 {
+			return false
+		}
+		seen[val]--
+	}
+	for _, count := range seen {
+		if count != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func configFlagsEmpty(flags configFlags) bool {
@@ -514,41 +1427,53 @@ func configFlagsEmpty(flags configFlags) bool {
 func runApp(flags runFlags, args runArgs) error {
 	targetArg := strings.TrimSpace(args.Target)
 	if targetArg == "" {
-		exitUsage("Usage: viberun [--agent provider] [--forward-agent|-A] <app> | viberun [--agent provider] [--forward-agent|-A] <app>@<host> | viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun [--agent provider] [--forward-agent|-A] <app> restore <snapshot> | viberun <app> shell | viberun <app> --delete [-y] | viberun bootstrap [<host>] | viberun config [options]")
+		exitUsage(runUsageFull())
 	}
 
 	actionArgs := []string{}
 	action := strings.TrimSpace(args.Action)
 	value := strings.TrimSpace(args.Value)
+	wantURL := false
+	wantUsers := false
 	if action != "" {
 		switch action {
 		case "snapshot":
 			if value != "" {
-				exitUsage("Usage: viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun <app> shell")
+				exitUsage(runUsageActions())
 			}
 			actionArgs = []string{"snapshot"}
 		case "snapshots":
 			if value != "" {
-				exitUsage("Usage: viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun <app> shell")
+				exitUsage(runUsageActions())
 			}
 			actionArgs = []string{"snapshots"}
 		case "shell":
 			if value != "" {
-				exitUsage("Usage: viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun <app> shell")
+				exitUsage(runUsageActions())
 			}
 			actionArgs = []string{"shell"}
+		case "url":
+			if value != "" {
+				exitUsage("Usage: viberun <app> url [flags]")
+			}
+			wantURL = true
+		case "users":
+			if value != "" {
+				exitUsage("Usage: viberun <app> users")
+			}
+			wantUsers = true
 		case "restore":
 			if value == "" {
-				exitUsage("Usage: viberun [--agent provider] [--forward-agent|-A] <app> restore <snapshot>")
+				exitUsage(runUsageRestore())
 			}
 			actionArgs = []string{"restore", value}
 		default:
-			exitUsage("Usage: viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun [--agent provider] [--forward-agent|-A] <app> restore <snapshot> | viberun <app> shell")
+			exitUsage(runUsageActions())
 		}
 	}
 	if flags.Delete {
 		if len(actionArgs) != 0 {
-			exitUsage("Usage: viberun [--delete] <app> | viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun [--agent provider] [--forward-agent|-A] <app> restore <snapshot> | viberun <app> shell")
+			exitUsage(runUsageDelete())
 		}
 		if !flags.Yes {
 			if !promptDelete(targetArg) {
@@ -559,7 +1484,16 @@ func runApp(flags runFlags, args runArgs) error {
 		actionArgs = []string{"delete"}
 	}
 
-	interactive := len(actionArgs) == 0 || (len(actionArgs) == 1 && actionArgs[0] == "shell")
+	if flags.Open && !wantURL {
+		exitUsage("Usage: viberun <app> url [flags]")
+	}
+	if (flags.MakePublic || flags.MakePrivate || flags.DisableURL || flags.EnableURL || flags.Domain != "" || flags.ClearDomain) && !wantURL {
+		exitUsage("Usage: viberun <app> url [--make-public|--make-private|--disable|--enable|--domain <domain>|--clear-domain]")
+	}
+	if wantUsers && !term.IsTerminal(int(os.Stdin.Fd())) {
+		return fmt.Errorf("app users requires a TTY")
+	}
+	interactive := !wantURL && !wantUsers && (len(actionArgs) == 0 || (len(actionArgs) == 1 && actionArgs[0] == "shell"))
 	tty := interactive && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 
 	cfg, cfgPath, err := config.Load()
@@ -567,7 +1501,7 @@ func runApp(flags runFlags, args runArgs) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	if strings.TrimSpace(flags.Agent) == "" && strings.TrimSpace(cfg.AgentProvider) == "" && tty {
+	if !wantURL && !wantUsers && strings.TrimSpace(flags.Agent) == "" && strings.TrimSpace(cfg.AgentProvider) == "" && tty {
 		selection, err := tui.SelectDefaultAgent(os.Stdin, os.Stdout)
 		if err != nil {
 			return err
@@ -591,6 +1525,62 @@ func runApp(flags runFlags, args runArgs) error {
 
 	if _, err := exec.LookPath("ssh"); err != nil {
 		return fmt.Errorf("ssh is required but was not found in PATH")
+	}
+	if err := ensureDevServerSynced(resolved.Host); err != nil {
+		return err
+	}
+
+	if wantURL {
+		changesRequested := flags.MakePublic || flags.MakePrivate || flags.DisableURL || flags.EnableURL || flags.Domain != "" || flags.ClearDomain
+		var before proxyInfo
+		if changesRequested {
+			info, err := fetchProxyInfo(resolved)
+			if err != nil {
+				return err
+			}
+			before = info
+			if err := applyURLUpdates(resolved, flags); err != nil {
+				return err
+			}
+		}
+		info, err := fetchProxyInfo(resolved)
+		if err != nil {
+			return err
+		}
+		if changesRequested {
+			printURLActionResult(os.Stdout, info)
+		} else {
+			printURLSummary(os.Stdout, info)
+		}
+		if flags.Open {
+			if info.Disabled || strings.TrimSpace(info.URL) == "" {
+				return fmt.Errorf("public URL is not available")
+			}
+			if err := openURL(info.URL); err != nil {
+				return err
+			}
+		}
+		if changesRequested {
+			if err := maybeRecreateAppForURLChange(resolved, before, info); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if wantUsers {
+		info, err := fetchProxyInfo(resolved)
+		if err != nil {
+			return err
+		}
+		updated, err := runUsersEditor(resolved, info)
+		if err != nil {
+			return err
+		}
+		if updated {
+			fmt.Fprintln(os.Stdout, "Updated app user access.")
+		}
+		return nil
 	}
 
 	agentProvider := cfg.AgentProvider
@@ -731,6 +1721,22 @@ func runApp(flags runFlags, args runArgs) error {
 func exitUsage(message string) {
 	fmt.Fprintln(os.Stderr, message)
 	os.Exit(2)
+}
+
+func runUsageFull() string {
+	return "Usage: viberun [--agent provider] [--forward-agent|-A] <app> | viberun [--agent provider] [--forward-agent|-A] <app>@<host> | viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun [--agent provider] [--forward-agent|-A] <app> restore <snapshot> | viberun <app> shell | viberun <app> url [flags] | viberun <app> users | viberun <app> --delete [-y] | viberun bootstrap [<host>] | viberun proxy setup [<host>] | viberun users <list|add|remove|set-password> | viberun wipe [<host>] | viberun config [options]"
+}
+
+func runUsageActions() string {
+	return "Usage: viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun [--agent provider] [--forward-agent|-A] <app> restore <snapshot> | viberun <app> shell | viberun <app> url [flags] | viberun <app> users"
+}
+
+func runUsageRestore() string {
+	return "Usage: viberun [--agent provider] [--forward-agent|-A] <app> restore <snapshot>"
+}
+
+func runUsageDelete() string {
+	return "Usage: viberun [--delete] <app> | viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun [--agent provider] [--forward-agent|-A] <app> restore <snapshot> | viberun <app> shell | viberun <app> url [flags]"
 }
 
 func printMissingHostMessage() {
@@ -987,6 +1993,7 @@ VIBERUN_SERVER_VERSION="${VIBERUN_SERVER_VERSION:-latest}"
 VIBERUN_SERVER_INSTALL_DIR="${VIBERUN_SERVER_INSTALL_DIR:-/usr/local/bin}"
 VIBERUN_SERVER_BIN="${VIBERUN_SERVER_BIN:-viberun-server}"
 VIBERUN_IMAGE="${VIBERUN_IMAGE:-}"
+VIBERUN_PROXY_IMAGE="${VIBERUN_PROXY_IMAGE:-ghcr.io/shayne/viberun/viberun-proxy:latest}"
 VIBERUN_SERVER_PATH="${VIBERUN_SERVER_INSTALL_DIR}/${VIBERUN_SERVER_BIN}"
 VIBERUN_SUDOERS_FILE="/etc/sudoers.d/viberun-server"
 
@@ -1017,9 +2024,19 @@ if [ "$(id -u)" -ne 0 ]; then
   fi
 fi
 
-if ! need_cmd curl && ! need_cmd wget; then
+	if ! need_cmd curl; then
   $SUDO apt-get update -y
   $SUDO apt-get install -y curl ca-certificates
+fi
+
+if ! need_cmd ss; then
+  $SUDO apt-get update -y
+  $SUDO apt-get install -y iproute2
+fi
+
+if ! need_cmd netstat; then
+  $SUDO apt-get update -y
+  $SUDO apt-get install -y net-tools
 fi
 
 if ! need_cmd mkfs.btrfs || ! need_cmd btrfs; then
@@ -1084,6 +2101,7 @@ fi
 
 if need_cmd docker; then
   pull_image "$VIBERUN_IMAGE"
+  pull_image "$VIBERUN_PROXY_IMAGE"
 fi
 
 asset="viberun-server-${os}-${arch}.tar.gz"
@@ -1416,6 +2434,17 @@ func promptDelete(app string) bool {
 	return input == "y" || input == "yes"
 }
 
+func promptYesNoDefaultYes(prompt string) bool {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Fprint(os.Stdout, prompt)
+	input, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return false
+	}
+	input = strings.TrimSpace(strings.ToLower(input))
+	return input == "" || input == "y" || input == "yes"
+}
+
 func promptCreateLocal(app string) bool {
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Fprintf(os.Stdout, "App %s does not exist. Create? [Y/n]: ", app)
@@ -1438,7 +2467,110 @@ func isDevRun() bool {
 	return strings.Contains(os.Args[0], "go-build")
 }
 
+func isDevVersion() bool {
+	trimmed := strings.TrimSpace(version)
+	return trimmed == "" || trimmed == "dev"
+}
+
+func ensureDevServerSynced(host string) error {
+	if !isDevRun() && !isDevVersion() {
+		return nil
+	}
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return nil
+	}
+	devServerSync.mu.Lock()
+	if devServerSync.hosts == nil {
+		devServerSync.hosts = map[string]bool{}
+	}
+	if devServerSync.hosts[host] {
+		devServerSync.mu.Unlock()
+		return nil
+	}
+	devServerSync.mu.Unlock()
+
+	remotePath, err := stageLocalServerBinary(host, "")
+	if err != nil {
+		return err
+	}
+	if err := installRemoteServerBinary(host, remotePath); err != nil {
+		return err
+	}
+	devServerSync.mu.Lock()
+	devServerSync.hosts[host] = true
+	devServerSync.mu.Unlock()
+	return nil
+}
+
+func installRemoteServerBinary(host string, remotePath string) error {
+	target := "/usr/local/bin/viberun-server"
+	remoteArgs := []string{"install", "-m", "0755", remotePath, target}
+	if hostNeedsSudo(host) {
+		remoteArgs = append([]string{"sudo", "-n"}, remoteArgs...)
+	}
+	sshArgs := sshcmd.BuildArgs(host, remoteArgs, false)
+	sshArgs = append([]string{"-o", "LogLevel=ERROR"}, sshArgs...)
+	cmd := exec.Command("ssh", sshArgs...)
+	cmd.Env = normalizedSshEnv()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		trimmed := strings.TrimSpace(string(output))
+		if trimmed == "" {
+			trimmed = err.Error()
+		}
+		return fmt.Errorf("failed to install viberun-server: %s", trimmed)
+	}
+	cleanupArgs := []string{"rm", "-f", remotePath}
+	if hostNeedsSudo(host) {
+		cleanupArgs = append([]string{"sudo", "-n"}, cleanupArgs...)
+	}
+	cleanupSSH := sshcmd.BuildArgs(host, cleanupArgs, false)
+	cleanupSSH = append([]string{"-o", "LogLevel=ERROR"}, cleanupSSH...)
+	cleanupCmd := exec.Command("ssh", cleanupSSH...)
+	cleanupCmd.Env = normalizedSshEnv()
+	_ = cleanupCmd.Run()
+	return nil
+}
+
+func hostNeedsSudo(host string) bool {
+	user := parseHostUser(host)
+	return user != "" && user != "root"
+}
+
+func parseHostUser(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return ""
+	}
+	if parts := strings.SplitN(host, "://", 2); len(parts) == 2 {
+		if parsed, err := url.Parse(host); err == nil && parsed.User != nil {
+			return parsed.User.Username()
+		}
+		return ""
+	}
+	if at := strings.LastIndex(host, "@"); at >= 0 {
+		return strings.TrimSpace(host[:at])
+	}
+	return ""
+}
+
 func stageLocalImage(host string) error {
+	if err := stageLocalDockerImage(host, "viberun:dev", "Dockerfile"); err != nil {
+		return err
+	}
+	return tagRemoteImage(host, "viberun:dev", "viberun:latest")
+}
+
+func stageLocalProxyImage(host string) error {
+	return stageLocalDockerImage(host, devProxyImageTag(), "Dockerfile.proxy")
+}
+
+func devProxyImageTag() string {
+	return "viberun-proxy:dev"
+}
+
+func stageLocalDockerImage(host string, tag string, dockerfile string) error {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return fmt.Errorf("docker is required to build the image locally")
 	}
@@ -1446,8 +2578,10 @@ func stageLocalImage(host string) error {
 	if err != nil {
 		return err
 	}
-	tag := "viberun:dev"
-	buildCmd := exec.Command("docker", "build", "--platform", "linux/"+arch, "-t", tag, ".")
+	if strings.TrimSpace(dockerfile) == "" {
+		dockerfile = "Dockerfile"
+	}
+	buildCmd := exec.Command("docker", "build", "--platform", "linux/"+arch, "-t", tag, "-f", dockerfile, ".")
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {
@@ -1478,7 +2612,14 @@ func stageLocalImage(host string) error {
 	if err := loadCmd.Wait(); err != nil {
 		return err
 	}
-	tagArgs := sshcmd.BuildArgs(host, []string{"docker", "tag", tag, "viberun:latest"}, false)
+	return nil
+}
+
+func tagRemoteImage(host string, source string, target string) error {
+	if strings.TrimSpace(source) == "" || strings.TrimSpace(target) == "" {
+		return nil
+	}
+	tagArgs := sshcmd.BuildArgs(host, []string{"docker", "tag", source, target}, false)
 	tagCmd := exec.Command("ssh", tagArgs...)
 	tagCmd.Env = normalizedSshEnv()
 	tagCmd.Stdout = os.Stdout

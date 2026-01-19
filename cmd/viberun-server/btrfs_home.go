@@ -14,6 +14,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/shayne/viberun/internal/hostcmd"
 )
 
 const (
@@ -105,10 +107,10 @@ func ensureHomeVolume(app string, create bool) (homeVolumeConfig, bool, error) {
 		return cfg, false, err
 	}
 	if created || !homeOwnedBy(cfg.MountDir, uid, gid) {
-		if err := runHostCommand("chown", fmt.Sprintf("%d:%d", uid, gid), cfg.MountDir).Run(); err != nil {
+		if err := hostcmd.Run("chown", fmt.Sprintf("%d:%d", uid, gid), cfg.MountDir).Run(); err != nil {
 			return cfg, false, fmt.Errorf("failed to set ownership on %s: %w", cfg.MountDir, err)
 		}
-		if err := runHostCommand("chmod", "0755", cfg.MountDir).Run(); err != nil {
+		if err := hostcmd.Run("chmod", "0755", cfg.MountDir).Run(); err != nil {
 			return cfg, false, fmt.Errorf("failed to set permissions on %s: %w", cfg.MountDir, err)
 		}
 	}
@@ -176,7 +178,7 @@ func ensureLoopDevice(path string) (string, error) {
 	if loop != "" {
 		return loop, nil
 	}
-	cmd := runHostCommand("losetup", "--find", "--show", "--nooverlap", path)
+	cmd := hostcmd.Run("losetup", "--find", "--show", "--nooverlap", path)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("failed to attach loop device: %s", strings.TrimSpace(string(out)))
@@ -189,7 +191,7 @@ func ensureLoopDevice(path string) (string, error) {
 }
 
 func findLoopDevice(path string) (string, error) {
-	cmd := runHostCommand("losetup", "-j", path)
+	cmd := hostcmd.Run("losetup", "-j", path)
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -222,7 +224,7 @@ func findLoopDevice(path string) (string, error) {
 
 func ensureBtrfsFilesystem(loop string, created bool) error {
 	if created {
-		if err := runHostCommandOutput("mkfs.btrfs", "-f", loop); err != nil {
+		if err := hostcmd.RunOutput("mkfs.btrfs", "-f", loop); err != nil {
 			return err
 		}
 		return nil
@@ -230,7 +232,7 @@ func ensureBtrfsFilesystem(loop string, created bool) error {
 	if ok, err := isBtrfsDevice(loop); err == nil && ok {
 		return nil
 	}
-	cmd := runHostCommand("btrfs", "filesystem", "show", loop)
+	cmd := hostcmd.Run("btrfs", "filesystem", "show", loop)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("loop device is not a btrfs filesystem: %s", loop)
 	}
@@ -241,7 +243,7 @@ func isBtrfsDevice(loop string) (bool, error) {
 	if _, err := exec.LookPath("blkid"); err != nil {
 		return false, err
 	}
-	cmd := runHostCommand("blkid", "-o", "value", "-s", "TYPE", loop)
+	cmd := hostcmd.Run("blkid", "-o", "value", "-s", "TYPE", loop)
 	out, err := cmd.Output()
 	if err != nil {
 		return false, err
@@ -259,7 +261,7 @@ func ensureRootMount(loop string, root string) error {
 		}
 		return nil
 	}
-	return runHostCommandOutput("mount", "-t", "btrfs", loop, root)
+	return hostcmd.RunOutput("mount", "-t", "btrfs", loop, root)
 }
 
 func ensureSubvolumes(cfg homeVolumeConfig) error {
@@ -273,7 +275,7 @@ func ensureSubvolumes(cfg homeVolumeConfig) error {
 		} else if !os.IsNotExist(err) {
 			return err
 		}
-		if err := runHostCommandOutput("btrfs", "subvolume", "create", path); err != nil {
+		if err := hostcmd.RunOutput("btrfs", "subvolume", "create", path); err != nil {
 			return err
 		}
 	}
@@ -293,7 +295,7 @@ func ensureSubvolumeMounted(loop string, subvol string, target string) error {
 		}
 		return nil
 	}
-	return runHostCommandOutput("mount", "-t", "btrfs", "-o", "subvol="+subvol, loop, target)
+	return hostcmd.RunOutput("mount", "-t", "btrfs", "-o", "subvol="+subvol, loop, target)
 }
 
 func writeHomeVolumeMeta(cfg homeVolumeConfig, loop string) error {
@@ -316,17 +318,17 @@ func deleteHomeVolume(app string) error {
 		return nil
 	}
 	if info, ok := mountInfoForTarget(cfg.MountDir); ok {
-		_ = runHostCommand("umount", info.Target).Run()
+		_ = hostcmd.Run("umount", info.Target).Run()
 	}
 	if info, ok := mountInfoForTarget(cfg.SnapshotsDir); ok {
-		_ = runHostCommand("umount", info.Target).Run()
+		_ = hostcmd.Run("umount", info.Target).Run()
 	}
 	if info, ok := mountInfoForTarget(cfg.RootMountDir); ok {
-		_ = runHostCommand("umount", info.Target).Run()
+		_ = hostcmd.Run("umount", info.Target).Run()
 	}
 	loop, _ := findLoopDevice(cfg.FilePath)
 	if loop != "" {
-		_ = runHostCommand("losetup", "-d", loop).Run()
+		_ = hostcmd.Run("losetup", "-d", loop).Run()
 	}
 	return os.RemoveAll(cfg.BaseDir)
 }
@@ -360,32 +362,11 @@ func mountInfoForTarget(target string) (mountInfo, bool) {
 	return mountInfo{}, false
 }
 
-func runHostCommand(name string, args ...string) *exec.Cmd {
-	if os.Geteuid() == 0 {
-		return exec.Command(name, args...)
-	}
-	sudoArgs := append([]string{"-n", name}, args...)
-	return exec.Command("sudo", sudoArgs...)
-}
-
-func runHostCommandOutput(name string, args ...string) error {
-	cmd := runHostCommand(name, args...)
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		return nil
-	}
-	output := strings.TrimSpace(string(out))
-	if output == "" {
-		return fmt.Errorf("failed to run %s: %w", name, err)
-	}
-	return fmt.Errorf("failed to run %s: %w: %s", name, err, output)
-}
-
 func ensureOwnedDir(path string, uid int, gid int) error {
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return err
 	}
-	if err := runHostCommand("chown", fmt.Sprintf("%d:%d", uid, gid), path).Run(); err != nil {
+	if err := hostcmd.Run("chown", fmt.Sprintf("%d:%d", uid, gid), path).Run(); err != nil {
 		return fmt.Errorf("failed to set ownership on %s: %w", path, err)
 	}
 	return nil

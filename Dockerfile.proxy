@@ -1,0 +1,20 @@
+ARG CADDY_VERSION=2.10.2
+ARG GO_VERSION=1.25.6
+
+FROM golang:${GO_VERSION} AS builder
+ARG TARGETARCH
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd ./cmd
+COPY internal ./internal
+COPY config ./config
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build -o /out/viberun-auth ./cmd/viberun-auth
+
+FROM caddy:${CADDY_VERSION}
+COPY --from=builder /out/viberun-auth /usr/local/bin/viberun-auth
+COPY config/auth /etc/viberun/auth
+COPY config/caddy-proxy.Caddyfile /etc/caddy/Caddyfile
+COPY bin/viberun-proxy-entrypoint /usr/local/bin/viberun-proxy-entrypoint
+RUN chmod +x /usr/local/bin/viberun-proxy-entrypoint
+ENTRYPOINT ["/usr/local/bin/viberun-proxy-entrypoint"]

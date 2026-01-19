@@ -172,3 +172,22 @@ jobs:
             dist/release/viberun-server-linux-amd64.tar.gz.sha256
             dist/release/viberun-server-linux-arm64.tar.gz
             dist/release/viberun-server-linux-arm64.tar.gz.sha256
+
+  push-proxy-image:
+    name: Publish nightly proxy image
+    runs-on: ubuntu-latest
+    needs: [release]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup mise
+        uses: jdx/mise-action@v3
+        with:
+          install: true
+          cache: true
+      - name: Log in to GHCR
+        run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build and push proxy image
+        run: mise run release:push-proxy-image
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}/viberun-proxy:nightly

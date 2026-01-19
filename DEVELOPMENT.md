@@ -13,6 +13,12 @@ This repo is Go-first and uses `mise` for tool and task orchestration.
 mise install
 ```
 
+## Version pins
+- Go 1.25.6 (via `mise`)
+- Node.js 24.13.0 LTS (via `mise`, container image)
+- App container base: Ubuntu 25.10
+- Proxy image: Caddy 2.10.2 + AuthCrunch (caddy-security) 1.1.31
+
 ## Build
 ```bash
 mise exec -- go build ./cmd/viberun

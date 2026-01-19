@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/shayne/viberun/internal/config"
+	"github.com/shayne/viberun/internal/proxy"
 )
 
 var ErrNoHostConfigured = errors.New("no host provided and no default host configured")
@@ -34,6 +35,10 @@ func Resolve(raw string, cfg config.Config) (Resolved, error) {
 	app, host, err := splitTarget(raw)
 	if err != nil {
 		return Resolved{}, err
+	}
+	app = strings.TrimSpace(app)
+	if app == "" {
+		return Resolved{}, fmt.Errorf("app name is required")
 	}
 
 	alias := ""
@@ -78,8 +83,11 @@ func splitTarget(raw string) (string, string, error) {
 	if app == "" || host == "" {
 		return "", "", fmt.Errorf("invalid target: expected app@host")
 	}
-
-	return app, host, nil
+	normalized, err := proxy.NormalizeAppName(app)
+	if err != nil {
+		return "", "", err
+	}
+	return normalized, host, nil
 }
 
 func resolveHostAlias(host string, cfg config.Config) (string, string) {

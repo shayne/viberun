@@ -5,12 +5,38 @@
 package main
 
 import (
+	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 )
 
 func TestEnsureRunSubcommandBootstrap(t *testing.T) {
 	args := []string{"bootstrap", "root@5.161.202.241"}
+	got := ensureRunSubcommand(args)
+	if !reflect.DeepEqual(got, args) {
+		t.Fatalf("expected %v, got %v", args, got)
+	}
+}
+
+func TestEnsureRunSubcommandProxy(t *testing.T) {
+	args := []string{"proxy", "setup"}
+	got := ensureRunSubcommand(args)
+	if !reflect.DeepEqual(got, args) {
+		t.Fatalf("expected %v, got %v", args, got)
+	}
+}
+
+func TestEnsureRunSubcommandUsers(t *testing.T) {
+	args := []string{"users", "list"}
+	got := ensureRunSubcommand(args)
+	if !reflect.DeepEqual(got, args) {
+		t.Fatalf("expected %v, got %v", args, got)
+	}
+}
+
+func TestEnsureRunSubcommandWipe(t *testing.T) {
+	args := []string{"wipe", "-y"}
 	got := ensureRunSubcommand(args)
 	if !reflect.DeepEqual(got, args) {
 		t.Fatalf("expected %v, got %v", args, got)
@@ -146,5 +172,34 @@ func TestReplaceEnv(t *testing.T) {
 	got = replaceEnv(env, "NEW", "val")
 	if !reflect.DeepEqual(got, []string{"A=1", "TERM=xterm", "NEW=val"}) {
 		t.Fatalf("replaceEnv add unexpected: %v", got)
+	}
+}
+
+func TestPrintURLSummary(t *testing.T) {
+	info := proxyInfo{
+		App:          "myapp",
+		URL:          "https://myapp.example.com",
+		Access:       "private",
+		Disabled:     false,
+		AllowedUsers: []string{"primary", "secondary"},
+		PublicIP:     "1.2.3.4",
+	}
+	var buf bytes.Buffer
+	printURLSummary(&buf, info)
+	out := buf.String()
+	if !strings.Contains(out, "App: myapp") {
+		t.Fatalf("expected app line in output: %s", out)
+	}
+	if !strings.Contains(out, "Status: private") {
+		t.Fatalf("expected status line in output: %s", out)
+	}
+	if !strings.Contains(out, "DNS: create an A record for myapp.example.com -> 1.2.3.4") {
+		t.Fatalf("expected dns line in output: %s", out)
+	}
+	if !strings.Contains(out, "Commands:") {
+		t.Fatalf("expected commands header in output: %s", out)
+	}
+	if !strings.Contains(out, "viberun myapp url --make-public") {
+		t.Fatalf("expected commands list in output: %s", out)
 	}
 }

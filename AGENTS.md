@@ -36,3 +36,13 @@
 
 ## Agent & Skills Notes
 - Skills in `skills/` are baked into the container image. If you change skill behavior, rebuild the image and re‑bootstrap the host.
+
+## CLI Styling Guidelines
+- Use Charmbracelet `lipgloss` for CLI styling when output is a TTY; preserve plain text when `NO_COLOR` is set or `TERM=dumb`.
+- Keep styling minimal and legible in both light and dark themes; prefer `AdaptiveColor` and avoid heavy color blocks.
+- Use brand fuchsia sparingly for headers; use a distinct, subdued color for commands and links.
+- Keep commands copy‑paste friendly; if adding descriptions, prefer inline `# comment` so pasted lines still work.
+
+## Wipe Command (Safety)
+- `viberun wipe [<host>]` deletes local config and wipes host state (containers, images, and viberun data/config/binaries). It uses a TUI confirmation that requires typing `WIPE`.
+- Keep this description updated whenever wipe behavior changes (added/removed paths, images, container patterns, or confirmation flow).

@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/shayne/viberun/internal/proxy"
 )
 
 const hostRPCContainerDir = "/var/run/viberun-hostrpc"
@@ -179,6 +181,10 @@ func (s *hostRPCServer) routes() http.Handler {
 	mux.HandleFunc("/snapshots", s.handleSnapshots)
 	mux.HandleFunc("/restore", s.handleRestore)
 	mux.HandleFunc("/healthz", s.handleHealth)
+	mux.HandleFunc("/proxy/public", s.handleProxyPublic)
+	mux.HandleFunc("/proxy/private", s.handleProxyPrivate)
+	mux.HandleFunc("/proxy/disable", s.handleProxyDisable)
+	mux.HandleFunc("/proxy/enable", s.handleProxyEnable)
 	return mux
 }
 
@@ -270,6 +276,116 @@ func (s *hostRPCServer) handleRestore(w http.ResponseWriter, r *http.Request) {
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 	}
+}
+
+func (s *hostRPCServer) handleProxyPublic(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorized(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	cfg, path, err := proxy.LoadConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := setProxyAccess(&cfg, s.app, proxy.AccessPublic); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := proxy.SaveConfig(path, cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := syncProxyWithState(cfg, mustLoadState()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_, _ = w.Write([]byte("ok\n"))
+}
+
+func (s *hostRPCServer) handleProxyPrivate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorized(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	cfg, path, err := proxy.LoadConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := setProxyAccess(&cfg, s.app, proxy.AccessPrivate); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := proxy.SaveConfig(path, cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := syncProxyWithState(cfg, mustLoadState()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_, _ = w.Write([]byte("ok\n"))
+}
+
+func (s *hostRPCServer) handleProxyDisable(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorized(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	cfg, path, err := proxy.LoadConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	setProxyDisabled(&cfg, s.app, true)
+	if err := proxy.SaveConfig(path, cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := syncProxyWithState(cfg, mustLoadState()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_, _ = w.Write([]byte("ok\n"))
+}
+
+func (s *hostRPCServer) handleProxyEnable(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorized(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	cfg, path, err := proxy.LoadConfig()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	setProxyDisabled(&cfg, s.app, false)
+	if err := proxy.SaveConfig(path, cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := syncProxyWithState(cfg, mustLoadState()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_, _ = w.Write([]byte("ok\n"))
 }
 
 func (s *hostRPCServer) authorized(r *http.Request) bool {

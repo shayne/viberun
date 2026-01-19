@@ -100,3 +100,36 @@ func TestLoadLegacyJSON(t *testing.T) {
 		t.Fatalf("host alias mismatch: %s != %s", loaded.Hosts["legacy"], cfg.Hosts["legacy"])
 	}
 }
+
+func TestRemoveConfigFiles(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+
+	path, err := configPath()
+	if err != nil {
+		t.Fatalf("configPath: %v", err)
+	}
+	legacyPath, err := legacyConfigPath()
+	if err != nil {
+		t.Fatalf("legacyConfigPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("test"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := os.WriteFile(legacyPath, []byte("legacy"), 0o644); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+
+	if err := RemoveConfigFiles(); err != nil {
+		t.Fatalf("RemoveConfigFiles: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected config removed, got %v", err)
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("expected legacy removed, got %v", err)
+	}
+}

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign in</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Space+Grotesk:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ .Assets }}/login.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="card">
+        <div class="card-head">
+          <h1>Sign in</h1>
+          <p>Access private Viberun apps.</p>
+        </div>
+        {{ if .Error }}
+        <div class="error">{{ .Error }}</div>
+        {{ end }}
+        <form class="form" method="POST" action="/__viberun/auth/login">
+          <label>
+            <span>Username</span>
+            <input name="username" type="text" autocomplete="username" required />
+          </label>
+          <label>
+            <span>Password</span>
+            <input name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <input type="hidden" name="redirect" value="{{ .Redirect }}" />
+          <button type="submit">Continue</button>
+        </form>
+      </section>
+    </main>
+    <div class="brand">
+      <a href="https://viberun.sh" target="_blank" rel="noreferrer">Viberun</a>
+    </div>
+  </body>
+</html>

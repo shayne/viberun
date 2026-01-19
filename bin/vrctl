@@ -18,6 +18,7 @@ Usage:
   vrctl host snapshot
   vrctl host snapshots
   vrctl host restore <snapshot-ref>
+  vrctl host urls public|private|disable|enable
 EOF
   exit 2
 }
@@ -372,6 +373,26 @@ host_restore() {
   echo "restore triggered for ${app_name}; reconnecting to the session" >&2
 }
 
+host_urls() {
+  [ $# -eq 1 ] || usage
+  action="$1"
+  case "$action" in
+    public) path="/proxy/public" ;;
+    private) path="/proxy/private" ;;
+    disable) path="/proxy/disable" ;;
+    enable) path="/proxy/enable" ;;
+    *) usage ;;
+  esac
+  socket="${VIBERUN_HOST_RPC_SOCKET:-/var/run/viberun-hostrpc/rpc.sock}"
+  token_file="${VIBERUN_HOST_RPC_TOKEN_FILE:-/var/run/viberun-hostrpc/token}"
+  [ -S "$socket" ] || die "host rpc socket not available; restart the app session"
+  [ -r "$token_file" ] || die "host rpc token not available; restart the app session"
+  token="$(tr -d '\n' < "$token_file")"
+  [ -n "$token" ] || die "host rpc token not available; restart the app session"
+  command -v curl >/dev/null 2>&1 || die "curl is required for host url control"
+  curl -fsS --unix-socket "$socket" -H "Authorization: Bearer $token" -X POST "http://localhost${path}" >/dev/null
+}
+
 main() {
   [ $# -ge 1 ] || usage
   case "$1" in
@@ -399,6 +420,7 @@ main() {
         snapshot) host_snapshot ;;
         snapshots) host_snapshots ;;
         restore) host_restore "$@" ;;
+        urls) host_urls "$@" ;;
         *) usage ;;
       esac
       ;;

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -62,7 +63,8 @@ func WithSudo(host string, remoteArgs []string) []string {
 	if cmdIdx >= len(remoteArgs) {
 		return remoteArgs
 	}
-	if remoteArgs[cmdIdx] != "viberun-server" {
+	cmd := remoteArgs[cmdIdx]
+	if filepath.Base(cmd) != "viberun-server" {
 		return remoteArgs
 	}
 	sudo := []string{"sudo", "-n", "/usr/local/bin/viberun-server"}

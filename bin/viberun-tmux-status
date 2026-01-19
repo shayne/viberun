@@ -6,6 +6,7 @@ app="${VIBERUN_APP:-}"
 agent="${VIBERUN_AGENT:-}"
 port="${VIBERUN_HOST_PORT:-}"
 listen_port="${VIBERUN_WEB_PORT:-8080}"
+public_url="${VIBERUN_PUBLIC_URL:-}"
 
 dot_on="●"
 dot_off="○"
@@ -78,7 +79,11 @@ case "$mode" in
       exit 0
     fi
     if is_listening; then
-      print_status "$color_green" "$dot_on" "$color_green" "http://localhost:${port}"
+      label="http://localhost:${port}"
+      if [ -n "$public_url" ]; then
+        label="$public_url"
+      fi
+      print_status "$color_green" "$dot_on" "$color_green" "$label"
     else
       case $? in
         2)

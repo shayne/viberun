@@ -158,3 +158,23 @@ jobs:
         env:
           IMAGE: ghcr.io/${{ github.repository }}/viberun:${{ github.ref_name }}
           IMAGE_LATEST: ghcr.io/${{ github.repository }}/viberun:latest
+
+  push-proxy-image:
+    name: Publish proxy image
+    runs-on: ubuntu-latest
+    needs: [release]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup mise
+        uses: jdx/mise-action@v3
+        with:
+          install: true
+          cache: true
+      - name: Log in to GHCR
+        run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build and push proxy image
+        run: mise run release:push-proxy-image
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}/viberun-proxy:${{ github.ref_name }}
+          IMAGE_LATEST: ghcr.io/${{ github.repository }}/viberun-proxy:latest

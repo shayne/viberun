@@ -22,6 +22,8 @@ import (
 	"golang.org/x/term"
 
 	"github.com/shayne/viberun/internal/agents"
+	"github.com/shayne/viberun/internal/hostcmd"
+	"github.com/shayne/viberun/internal/proxy"
 	"github.com/shayne/viberun/internal/server"
 	"github.com/shayne/viberun/internal/tui"
 	"github.com/shayne/yargs"
@@ -101,8 +103,33 @@ func (q *restoreQueue) Finish() {
 func main() {
 	args := os.Args[1:]
 	if len(args) == 0 || hasHelpFlag(args) {
-		fmt.Fprintln(os.Stderr, "Usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|update|shell|port|delete|exists]")
+		fmt.Fprintln(os.Stderr, "Usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|update|shell|port|delete|exists] | viberun-server apps | viberun-server proxy setup --domain <domain> --public-ip <ip> | viberun-server proxy url <app> | viberun-server wipe")
 		os.Exit(2)
+	}
+	if args[0] == "proxy" {
+		if os.Geteuid() != 0 {
+			fmt.Fprintln(os.Stderr, "viberun-server must run as root; run via sudo or re-run bootstrap")
+			os.Exit(1)
+		}
+		if err := handleProxyCommand(args[1:]); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+		return
+	}
+	if args[0] == "wipe" {
+		if err := handleWipeCommand(); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+		return
+	}
+	if args[0] == "apps" {
+		if err := handleAppsCommand(); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+		return
 	}
 	result, err := yargs.ParseFlags[serverFlags](args)
 	if err != nil {
@@ -111,13 +138,13 @@ func main() {
 	}
 
 	if len(result.Args) < 1 || len(result.Args) > 3 {
-		fmt.Fprintln(os.Stderr, "Usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|update|shell|port|delete|exists]")
+		fmt.Fprintln(os.Stderr, "Usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|update|shell|port|delete|exists] | viberun-server apps | viberun-server proxy setup --domain <domain> --public-ip <ip> | viberun-server proxy url <app> | viberun-server wipe")
 		os.Exit(2)
 	}
 	args = result.Args
-	app := strings.TrimSpace(args[0])
-	if app == "" {
-		fmt.Fprintln(os.Stderr, "app name is required")
+	app, err := proxy.NormalizeAppName(args[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(2)
 	}
 
@@ -168,6 +195,7 @@ func main() {
 	} else if synced {
 		stateDirty = true
 	}
+	persistState(statePath, &state, &stateDirty)
 
 	containerName := fmt.Sprintf("viberun-%s", app)
 	exists, err := containerExists(containerName)
@@ -226,12 +254,7 @@ func main() {
 		if deletedState {
 			stateDirty = true
 		}
-		if stateDirty {
-			if err := server.SaveState(statePath, state); err != nil {
-				fmt.Fprintf(os.Stderr, "failed to save server state: %v\n", err)
-				os.Exit(1)
-			}
-		}
+		persistState(statePath, &state, &stateDirty)
 		fmt.Fprintf(os.Stdout, "Deleted app %s\n", app)
 		return
 	}
@@ -244,14 +267,9 @@ func main() {
 	if portDirty {
 		stateDirty = true
 	}
+	persistState(statePath, &state, &stateDirty)
 
 	if action == "port" {
-		if stateDirty {
-			if err := server.SaveState(statePath, state); err != nil {
-				fmt.Fprintf(os.Stderr, "failed to save server state: %v\n", err)
-				os.Exit(1)
-			}
-		}
 		fmt.Fprintln(os.Stdout, port)
 		return
 	}
@@ -270,13 +288,23 @@ func main() {
 		}
 		ui := newAppProgress(app)
 		ui.Start()
-		ui.Step("Pull image")
-		if err := runDockerCommandOutput("pull", defaultImage); err != nil {
-			ui.Fail("failed")
-			fmt.Fprintf(os.Stderr, "failed to pull image: %v\n", err)
-			os.Exit(1)
+		if strings.TrimSpace(os.Getenv("VIBERUN_SKIP_IMAGE_PULL")) != "" {
+			ui.Step("Check image")
+			if _, err := exec.Command("docker", "image", "inspect", defaultImage).CombinedOutput(); err != nil {
+				ui.Fail("failed")
+				fmt.Fprintf(os.Stderr, "image %s not available; re-run bootstrap to stage it\n", defaultImage)
+				os.Exit(1)
+			}
+			ui.Done("")
+		} else {
+			ui.Step("Pull image")
+			if err := runDockerCommandOutput("pull", defaultImage); err != nil {
+				ui.Fail("failed")
+				fmt.Fprintf(os.Stderr, "failed to pull image: %v\n", err)
+				os.Exit(1)
+			}
+			ui.Done("")
 		}
-		ui.Done("")
 		ui.Step("Recreate container")
 		if err := runDockerCommandOutput("rm", "-f", containerName); err != nil {
 			ui.Fail("failed")
@@ -291,12 +319,6 @@ func main() {
 		ui.Done("")
 		ui.Stop()
 		_ = clearUpdateStatus(app)
-		if stateDirty {
-			if err := server.SaveState(statePath, state); err != nil {
-				fmt.Fprintf(os.Stderr, "failed to save server state: %v\n", err)
-				os.Exit(1)
-			}
-		}
 		fmt.Fprintf(os.Stdout, "Updated app %s\n", app)
 		return
 	}
@@ -310,12 +332,6 @@ func main() {
 		if err := restoreSnapshot(containerName, app, port, ref); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to restore snapshot: %v\n", err)
 			os.Exit(1)
-		}
-		if stateDirty {
-			if err := server.SaveState(statePath, state); err != nil {
-				fmt.Fprintf(os.Stderr, "failed to save server state: %v\n", err)
-				os.Exit(1)
-			}
 		}
 		fmt.Fprintf(os.Stdout, "Restored app %s from %s\n", app, ref)
 		return
@@ -375,12 +391,7 @@ func main() {
 		ui.Stop()
 	}
 
-	if stateDirty {
-		if err := server.SaveState(statePath, state); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to save server state: %v\n", err)
-			os.Exit(1)
-		}
-	}
+	persistState(statePath, &state, &stateDirty)
 
 	running, err := containerRunning(containerName)
 	if err != nil {
@@ -502,6 +513,18 @@ func hasHelpFlag(args []string) bool {
 		}
 	}
 	return false
+}
+
+func persistState(statePath string, state *server.State, dirty *bool) {
+	if dirty == nil || state == nil || !*dirty {
+		return
+	}
+	if err := server.SaveState(statePath, *state); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to save server state: %v\n", err)
+		os.Exit(1)
+	}
+	*dirty = false
+	warnProxySync(*state)
 }
 
 func resolvePort(state *server.State, app string, containerName string, exists bool) (int, bool, error) {
@@ -647,7 +670,11 @@ func dockerRun(name string, app string, port int) error {
 	if err := ensureHostRPCDir(app); err != nil {
 		return err
 	}
-	args := dockerRunArgs(name, app, port, defaultImage)
+	extraEnv, err := proxyEnvForApp(app)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load proxy config for %s: %v\n", app, err)
+	}
+	args := dockerRunArgs(name, app, port, defaultImage, extraEnv)
 	return runDockerCommandOutput(args...)
 }
 
@@ -1148,7 +1175,7 @@ func runInteractiveSession(containerName string, app string, port int, agentArgs
 	}
 }
 
-func dockerRunArgs(name string, app string, port int, image string) []string {
+func dockerRunArgs(name string, app string, port int, image string, extraEnv map[string]string) []string {
 	hostRPC := hostRPCConfigForApp(app)
 	homeCfg := homeVolumeConfigForApp(app)
 	args := []string{
@@ -1168,6 +1195,19 @@ func dockerRunArgs(name string, app string, port int, image string) []string {
 		fmt.Sprintf("VIBERUN_CONTAINER=%s", name),
 		"-e",
 		fmt.Sprintf("VIBERUN_PORT=%d", port),
+	}
+	if len(extraEnv) > 0 {
+		keys := make([]string, 0, len(extraEnv))
+		for key, value := range extraEnv {
+			if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+				continue
+			}
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			args = append(args, "-e", fmt.Sprintf("%s=%s", key, extraEnv[key]))
+		}
 	}
 	args = append(args,
 		"-v",
@@ -1201,6 +1241,51 @@ func dockerRunArgs(name string, app string, port int, image string) []string {
 	}
 	args = append(args, image, "/usr/bin/s6-svscan", "/home/viberun/.local/services")
 	return args
+}
+
+func proxyEnvForApp(app string) (map[string]string, error) {
+	cfg, _, err := proxy.LoadConfig()
+	if err != nil {
+		return nil, err
+	}
+	if !cfg.Enabled || strings.TrimSpace(cfg.BaseDomain) == "" {
+		return nil, nil
+	}
+	host := proxy.PublicHostForApp(cfg, app)
+	if host == "" {
+		return nil, nil
+	}
+	url := proxy.PublicURLForApp(cfg, app)
+	if url == "" {
+		return nil, nil
+	}
+	env := map[string]string{}
+	if key := strings.TrimSpace(cfg.Env.PublicURL); key != "" {
+		env[key] = url
+	}
+	if key := strings.TrimSpace(cfg.Env.PublicDomain); key != "" {
+		env[key] = host
+	}
+	return env, nil
+}
+
+func handleAppsCommand() error {
+	state, _, err := server.LoadState()
+	if err != nil {
+		return err
+	}
+	names := make([]string, 0, len(state.Ports))
+	for name := range state.Ports {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		fmt.Fprintln(os.Stdout, name)
+	}
+	return nil
 }
 
 func tmuxSessionArgs(session string, windowName string, command []string) []string {
@@ -1303,7 +1388,7 @@ func chmodPath(path string, mode os.FileMode) error {
 	if err := os.Chmod(path, mode); err == nil {
 		return nil
 	}
-	return runHostCommand("chmod", fmt.Sprintf("%#o", mode), path).Run()
+	return hostcmd.Run("chmod", fmt.Sprintf("%#o", mode), path).Run()
 }
 
 func ensureRootfulDocker() error {

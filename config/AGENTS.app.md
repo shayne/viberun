@@ -17,7 +17,7 @@ This AGENTS.md applies to the app working directory inside the container.
 
 ## Packages and tooling
 - Install OS packages with sudo apt or sudo apt-get.
-- Node 22+ and Python 3 are available (`python` points to Python 3).
+- Node 24 LTS and Python 3 are available (`python` points to Python 3).
 - Prefer Python + uv or TypeScript per the skills.
 
 ## Skills (invoke with $name)
