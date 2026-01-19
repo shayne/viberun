@@ -58,6 +58,7 @@ viberun hello-world
 If this is the first run, the server will prompt to create the container. Press Enter to accept.
 
 Detach without stopping the agent: Ctrl-\\ . Reattach later with `viberun hello-world`.
+Paste clipboard images into the session with Ctrl-V; `viberun` uploads the image and inserts a `/tmp/viberun-clip-*.png` path.
 
 ### 4) Hello-world prompt (paste inside the session)
 
@@ -80,11 +81,13 @@ Open it in your browser.
 ```bash
 viberun myapp
 viberun myapp@hostb
+viberun --forward-agent myapp
 viberun myapp shell
 viberun myapp snapshot
 viberun myapp snapshots
 viberun myapp restore latest
 viberun myapp --delete -y
+viberun myapp update
 viberun bootstrap [<host>]
 viberun config --host myhost --agent codex
 viberun version
@@ -272,6 +275,7 @@ Supported agent providers:
 - `gemini`
 
 Set globally with `viberun config --agent <provider>` or per-run with `viberun --agent <provider> <app>`.
+To forward your local SSH agent into the container, use `viberun --forward-agent <app>`. For existing apps, run `viberun <app> update` once to recreate the container with the agent socket mounted.
 
 Base skills are shipped in `/opt/viberun/skills` and symlinked into each agent's skills directory. User skills can be added directly to the agent-specific skills directory under `/home/viberun`.
 
