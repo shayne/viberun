@@ -2064,11 +2064,11 @@ pull_image() {
   if [ -z "$image" ]; then
     return 0
   fi
-  if ! $SUDO docker pull "$image"; then
-    echo "warning: failed to pull image $image" >&2
+  if ! output="$($SUDO docker pull --quiet "$image" 2>&1)"; then
+    echo "warning: failed to pull image $image: $output" >&2
     return 0
   fi
-  $SUDO docker tag "$image" "viberun:latest" || true
+  return 0
 }
 
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -2101,6 +2101,9 @@ fi
 
 if need_cmd docker; then
   pull_image "$VIBERUN_IMAGE"
+  if [ -z "${VIBERUN_SKIP_IMAGE_PULL:-}" ] && [ -n "$VIBERUN_IMAGE" ]; then
+    $SUDO docker tag "$VIBERUN_IMAGE" "viberun:latest" || true
+  fi
   pull_image "$VIBERUN_PROXY_IMAGE"
 fi
 

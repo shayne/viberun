@@ -200,8 +200,16 @@ func copyHostFileToContainer(container string, file authbundle.File) error {
 	}
 	user := containerUser()
 	if user != "" && user != "root" {
-		if err := exec.Command("docker", "exec", "--user", "root", container, "chown", fmt.Sprintf("%s:%s", user, user), file.ContainerPath).Run(); err != nil {
-			return fmt.Errorf("failed to chown %s: %v", file.ContainerPath, err)
+		out, err := exec.Command("docker", "exec", "--user", "root", container, "chown", fmt.Sprintf("%s:%s", user, user), file.ContainerPath).CombinedOutput()
+		if err != nil {
+			msg := strings.TrimSpace(string(out))
+			if strings.Contains(strings.ToLower(msg), "unknown user") || strings.Contains(strings.ToLower(msg), "unknown group") {
+				return fmt.Errorf("failed to chown %s: %s (container user %q missing; check the app image tag)", file.ContainerPath, msg, user)
+			}
+			if msg == "" {
+				return fmt.Errorf("failed to chown %s: %v", file.ContainerPath, err)
+			}
+			return fmt.Errorf("failed to chown %s: %s", file.ContainerPath, msg)
 		}
 	}
 	if file.Mode != 0 {
