@@ -74,7 +74,7 @@ func runCLI() error {
 type runFlags struct {
 	Agent        string `flag:"agent" help:"agent provider to run (codex, claude, gemini, ampcode, opencode, or npx:<pkg>/uvx:<pkg>)"`
 	ForwardAgent bool   `flag:"forward-agent" short:"A" help:"forward local SSH agent into the container"`
-	Delete       bool   `flag:"delete" help:"delete the app and snapshots"`
+	Delete       bool   `flag:"delete" help:"delete the app and snapshots (alias: --remove)"`
 	Yes          bool   `flag:"yes" short:"y" help:"skip confirmation prompts"`
 }
 
@@ -251,6 +251,7 @@ func consumesValue(flag string) bool {
 }
 
 func handleRunCommand(_ context.Context, args []string) error {
+	args = normalizeRunArgs(args)
 	result, err := yargs.ParseAndHandleHelp[struct{}, runFlags, runArgs](args, helpConfig)
 	if errors.Is(err, yargs.ErrShown) {
 		return nil
@@ -259,6 +260,25 @@ func handleRunCommand(_ context.Context, args []string) error {
 		return err
 	}
 	return runApp(result.SubCommandFlags, result.Args)
+}
+
+func normalizeRunArgs(args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	out := make([]string, len(args))
+	for i, arg := range args {
+		if arg == "--remove" {
+			out[i] = "--delete"
+			continue
+		}
+		if strings.HasPrefix(arg, "--remove=") {
+			out[i] = "--delete=" + strings.TrimPrefix(arg, "--remove=")
+			continue
+		}
+		out[i] = arg
+	}
+	return out
 }
 
 func handleConfigCommand(_ context.Context, args []string) error {
