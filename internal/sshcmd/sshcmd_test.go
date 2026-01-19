@@ -52,6 +52,47 @@ func TestRemoteArgsIncludesExtraEnv(t *testing.T) {
 	}
 }
 
+func TestWithSudoKeepsRoot(t *testing.T) {
+	remote := []string{"viberun-server", "--agent", "codex", "myapp"}
+	out := WithSudo("root@host-a", remote)
+	if len(out) != len(remote) {
+		t.Fatalf("unexpected args: %v", out)
+	}
+	for i := range remote {
+		if out[i] != remote[i] {
+			t.Fatalf("unexpected arg at %d: got %q want %q", i, out[i], remote[i])
+		}
+	}
+}
+
+func TestWithSudoWrapsNonRoot(t *testing.T) {
+	remote := []string{"viberun-server", "--agent", "codex", "myapp"}
+	out := WithSudo("alex@host-a", remote)
+	expected := []string{"sudo", "-n", "/usr/local/bin/viberun-server", "--agent", "codex", "myapp"}
+	if len(out) != len(expected) {
+		t.Fatalf("unexpected args: %v", out)
+	}
+	for i := range expected {
+		if out[i] != expected[i] {
+			t.Fatalf("unexpected arg at %d: got %q want %q", i, out[i], expected[i])
+		}
+	}
+}
+
+func TestWithSudoPreservesEnvPrefix(t *testing.T) {
+	remote := []string{"env", "FOO=bar", "viberun-server", "--agent", "codex", "myapp"}
+	out := WithSudo("alex@host-a", remote)
+	expected := []string{"env", "FOO=bar", "sudo", "-n", "/usr/local/bin/viberun-server", "--agent", "codex", "myapp"}
+	if len(out) != len(expected) {
+		t.Fatalf("unexpected args: %v", out)
+	}
+	for i := range expected {
+		if out[i] != expected[i] {
+			t.Fatalf("unexpected arg at %d: got %q want %q", i, out[i], expected[i])
+		}
+	}
+}
+
 func TestBuildArgsTTY(t *testing.T) {
 	remote := []string{"viberun-server", "--agent", "codex", "myapp"}
 	args := BuildArgs("host-a", remote, true)

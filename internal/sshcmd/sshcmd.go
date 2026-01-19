@@ -6,6 +6,7 @@ package sshcmd
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -41,6 +42,57 @@ func RemoteArgs(app string, agentProvider string, actionArgs []string, extraEnv 
 		prefix = append(prefix, key+"="+entries[key])
 	}
 	return append(prefix, remote...)
+}
+
+// WithSudo wraps the remote viberun-server command in sudo when the host user is non-root.
+func WithSudo(host string, remoteArgs []string) []string {
+	if !needsSudo(host) {
+		return remoteArgs
+	}
+	if len(remoteArgs) == 0 {
+		return remoteArgs
+	}
+	cmdIdx := 0
+	if remoteArgs[0] == "env" {
+		cmdIdx = 1
+		for cmdIdx < len(remoteArgs) && strings.Contains(remoteArgs[cmdIdx], "=") {
+			cmdIdx++
+		}
+	}
+	if cmdIdx >= len(remoteArgs) {
+		return remoteArgs
+	}
+	if remoteArgs[cmdIdx] != "viberun-server" {
+		return remoteArgs
+	}
+	sudo := []string{"sudo", "-n", "/usr/local/bin/viberun-server"}
+	out := make([]string, 0, len(remoteArgs)+2)
+	out = append(out, remoteArgs[:cmdIdx]...)
+	out = append(out, sudo...)
+	out = append(out, remoteArgs[cmdIdx+1:]...)
+	return out
+}
+
+func needsSudo(host string) bool {
+	user := hostUser(host)
+	return user != "" && user != "root"
+}
+
+func hostUser(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return ""
+	}
+	if parts := strings.SplitN(host, "://", 2); len(parts) == 2 {
+		if parsed, err := url.Parse(host); err == nil && parsed.User != nil {
+			return parsed.User.Username()
+		}
+		return ""
+	}
+	if at := strings.LastIndex(host, "@"); at >= 0 {
+		return strings.TrimSpace(host[:at])
+	}
+	return ""
 }
 
 // BuildArgs builds the ssh argument list for a target host and remote command.

@@ -30,7 +30,8 @@ func TestStateAssignPort(t *testing.T) {
 
 func TestStateLoadSave(t *testing.T) {
 	tmp := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmp)
+	statePath := filepath.Join(tmp, "viberun", "server-state.json")
+	t.Setenv("VIBERUN_STATE_PATH", statePath)
 
 	state, path, err := LoadState()
 	if err != nil {
@@ -39,7 +40,7 @@ func TestStateLoadSave(t *testing.T) {
 	if len(state.Ports) != 0 {
 		t.Fatalf("expected empty state")
 	}
-	if filepath.Dir(path) != filepath.Join(tmp, "viberun") {
+	if path != statePath {
 		t.Fatalf("unexpected state path: %s", path)
 	}
 

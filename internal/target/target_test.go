@@ -19,8 +19,8 @@ func TestResolveUsesDefaultHost(t *testing.T) {
 	if resolved.App != "myapp" {
 		t.Fatalf("expected app myapp, got %q", resolved.App)
 	}
-	if resolved.Host != "host-a" {
-		t.Fatalf("expected host host-a, got %q", resolved.Host)
+	if resolved.Host != "root@host-a" {
+		t.Fatalf("expected host root@host-a, got %q", resolved.Host)
 	}
 	if resolved.HostAlias != "" {
 		t.Fatalf("expected empty alias, got %q", resolved.HostAlias)
@@ -36,8 +36,8 @@ func TestResolveUsesExplicitHost(t *testing.T) {
 	if resolved.App != "myapp" {
 		t.Fatalf("expected app myapp, got %q", resolved.App)
 	}
-	if resolved.Host != "host-b" {
-		t.Fatalf("expected host host-b, got %q", resolved.Host)
+	if resolved.Host != "root@host-b" {
+		t.Fatalf("expected host root@host-b, got %q", resolved.Host)
 	}
 }
 
@@ -52,7 +52,7 @@ func TestResolveAliasLookup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
-	if resolved.Host != "ssh://prod.example.com" {
+	if resolved.Host != "ssh://root@prod.example.com" {
 		t.Fatalf("expected resolved host, got %q", resolved.Host)
 	}
 	if resolved.HostAlias != "prod" {
@@ -84,8 +84,8 @@ func TestResolveHostUsesDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
-	if resolved.Host != "host-a" {
-		t.Fatalf("expected host host-a, got %q", resolved.Host)
+	if resolved.Host != "root@host-a" {
+		t.Fatalf("expected host root@host-a, got %q", resolved.Host)
 	}
 	if resolved.HostAlias != "" {
 		t.Fatalf("expected empty alias, got %q", resolved.HostAlias)
@@ -98,8 +98,8 @@ func TestResolveHostUsesExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
-	if resolved.Host != "host-b" {
-		t.Fatalf("expected host host-b, got %q", resolved.Host)
+	if resolved.Host != "root@host-b" {
+		t.Fatalf("expected host root@host-b, got %q", resolved.Host)
 	}
 }
 
@@ -114,7 +114,7 @@ func TestResolveHostResolvesAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
-	if resolved.Host != "ssh://prod.example.com" {
+	if resolved.Host != "ssh://root@prod.example.com" {
 		t.Fatalf("expected resolved host, got %q", resolved.Host)
 	}
 	if resolved.HostAlias != "prod" {

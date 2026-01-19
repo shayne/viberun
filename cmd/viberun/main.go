@@ -655,6 +655,7 @@ func runApp(flags runFlags, args runArgs) error {
 		}
 	}
 	remoteArgs := sshcmd.RemoteArgs(resolved.App, agentProvider, actionArgs, extraEnv)
+	remoteArgs = sshcmd.WithSudo(resolved.Host, remoteArgs)
 	if interactive && !isLocalHost(resolved.Host) {
 		hostPort, err := resolveHostPort(resolved, agentProvider)
 		if err != nil {
@@ -961,6 +962,14 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+VIBERUN_SERVER_REPO="${VIBERUN_SERVER_REPO:-shayne/viberun}"
+VIBERUN_SERVER_VERSION="${VIBERUN_SERVER_VERSION:-latest}"
+VIBERUN_SERVER_INSTALL_DIR="${VIBERUN_SERVER_INSTALL_DIR:-/usr/local/bin}"
+VIBERUN_SERVER_BIN="${VIBERUN_SERVER_BIN:-viberun-server}"
+VIBERUN_IMAGE="${VIBERUN_IMAGE:-}"
+VIBERUN_SERVER_PATH="${VIBERUN_SERVER_INSTALL_DIR}/${VIBERUN_SERVER_BIN}"
+VIBERUN_SUDOERS_FILE="/etc/sudoers.d/viberun-server"
+
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then
   if ! need_cmd sudo; then
@@ -970,6 +979,21 @@ if [ "$(id -u)" -ne 0 ]; then
   SUDO="sudo"
   if ! sudo -n true 2>/dev/null; then
     echo "sudo password may be required during bootstrap" >&2
+  fi
+  if [ ! -f "$VIBERUN_SUDOERS_FILE" ]; then
+    echo "viberun needs passwordless sudo and full environment access for viberun-server." >&2
+    printf "Allow viberun to add a sudoers entry for %s? [y/N]: " "$VIBERUN_SERVER_PATH" >&2
+    read -r reply
+    case "$reply" in
+      y|Y|yes|YES)
+        $SUDO sh -c "cat > \"$VIBERUN_SUDOERS_FILE\" <<EOF\nDefaults!$VIBERUN_SERVER_PATH !env_reset\n$USER ALL=(root) NOPASSWD: $VIBERUN_SERVER_PATH\nEOF"
+        $SUDO chmod 0440 "$VIBERUN_SUDOERS_FILE"
+        ;;
+      *)
+        echo "cannot continue without passwordless sudo for viberun-server" >&2
+        exit 1
+        ;;
+    esac
   fi
 fi
 
@@ -981,26 +1005,6 @@ fi
 if ! need_cmd mkfs.btrfs || ! need_cmd btrfs; then
   $SUDO apt-get update -y
   $SUDO apt-get install -y btrfs-progs
-fi
-
-if [ "$(id -u)" -ne 0 ]; then
-  if need_cmd sudo; then
-    btrfs_cmds=""
-    for bin in btrfs mkfs.btrfs losetup mount umount; do
-      path="$(command -v "$bin" || true)"
-      if [ -n "$path" ]; then
-        if [ -n "$btrfs_cmds" ]; then
-          btrfs_cmds="${btrfs_cmds}, ${path}"
-        else
-          btrfs_cmds="${path}"
-        fi
-      fi
-    done
-    if [ -n "$btrfs_cmds" ]; then
-      echo "${USER} ALL=(root) NOPASSWD: ${btrfs_cmds}" | $SUDO tee /etc/sudoers.d/viberun-btrfs >/dev/null
-      $SUDO chmod 0440 /etc/sudoers.d/viberun-btrfs
-    fi
-  fi
 fi
 
 if ! need_cmd docker; then
@@ -1039,12 +1043,6 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "added $USER to docker group; run 'newgrp docker' or reconnect to apply" >&2
   fi
 fi
-
-VIBERUN_SERVER_REPO="${VIBERUN_SERVER_REPO:-shayne/viberun}"
-VIBERUN_SERVER_VERSION="${VIBERUN_SERVER_VERSION:-latest}"
-VIBERUN_SERVER_INSTALL_DIR="${VIBERUN_SERVER_INSTALL_DIR:-/usr/local/bin}"
-VIBERUN_SERVER_BIN="${VIBERUN_SERVER_BIN:-viberun-server}"
-VIBERUN_IMAGE="${VIBERUN_IMAGE:-}"
 
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 arch_raw="$(uname -m)"
@@ -1177,7 +1175,10 @@ else
   fi
 fi
 
-$SUDO install -m 0755 "$binary_path" "$VIBERUN_SERVER_INSTALL_DIR/$VIBERUN_SERVER_BIN"
+$SUDO install -m 0755 "$binary_path" "$VIBERUN_SERVER_PATH"
+if [ "$VIBERUN_SERVER_PATH" != "/usr/local/bin/viberun-server" ]; then
+  $SUDO ln -sf "$VIBERUN_SERVER_PATH" "/usr/local/bin/viberun-server"
+fi
 `
 }
 
@@ -1195,6 +1196,7 @@ func shellQuote(value string) string {
 
 func resolveHostPort(resolved target.Resolved, agentProvider string) (int, error) {
 	remoteArgs := sshcmd.RemoteArgs(resolved.App, agentProvider, []string{"port"}, nil)
+	remoteArgs = sshcmd.WithSudo(resolved.Host, remoteArgs)
 	sshArgs := sshcmd.BuildArgs(resolved.Host, remoteArgs, false)
 	cmd := exec.Command("ssh", sshArgs...)
 	cmd.Env = normalizedSshEnv()
@@ -1216,6 +1218,7 @@ func resolveHostPort(resolved target.Resolved, agentProvider string) (int, error
 
 func remoteContainerExists(resolved target.Resolved, agentProvider string) (bool, error) {
 	remoteArgs := sshcmd.RemoteArgs(resolved.App, agentProvider, []string{"exists"}, nil)
+	remoteArgs = sshcmd.WithSudo(resolved.Host, remoteArgs)
 	sshArgs := sshcmd.BuildArgs(resolved.Host, remoteArgs, false)
 	cmd := exec.Command("ssh", sshArgs...)
 	cmd.Env = normalizedSshEnv()

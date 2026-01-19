@@ -9,9 +9,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
-const basePort = 8080
+const (
+	basePort      = 8080
+	stateFilePath = "/var/lib/viberun/server-state.json"
+)
 
 // State tracks persisted server allocations.
 type State struct {
@@ -109,14 +113,8 @@ func (s *State) RemoveApp(app string) bool {
 }
 
 func statePath() (string, error) {
-	configHome := os.Getenv("XDG_CONFIG_HOME")
-	if configHome == "" {
-		var err error
-		configHome, err = os.UserConfigDir()
-		if err != nil {
-			return "", err
-		}
+	if value := strings.TrimSpace(os.Getenv("VIBERUN_STATE_PATH")); value != "" {
+		return value, nil
 	}
-
-	return filepath.Join(configHome, "viberun", "server-state.json"), nil
+	return stateFilePath, nil
 }

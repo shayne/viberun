@@ -143,8 +143,16 @@ func main() {
 	}
 	agentArgs = tmuxSessionArgs(sessionName, agentLabel, agentArgs)
 
+	if os.Geteuid() != 0 {
+		fmt.Fprintln(os.Stderr, "viberun-server must run as root; run via sudo or re-run bootstrap")
+		os.Exit(1)
+	}
 	if _, err := exec.LookPath("docker"); err != nil {
 		fmt.Fprintln(os.Stderr, "docker is required but was not found in PATH")
+		os.Exit(1)
+	}
+	if err := ensureRootfulDocker(); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 	}
 
@@ -1296,4 +1304,45 @@ func chmodPath(path string, mode os.FileMode) error {
 		return nil
 	}
 	return runHostCommand("chmod", fmt.Sprintf("%#o", mode), path).Run()
+}
+
+func ensureRootfulDocker() error {
+	if host := strings.TrimSpace(os.Getenv("DOCKER_HOST")); host != "" {
+		if strings.HasPrefix(host, "unix://") {
+			socket := strings.TrimPrefix(host, "unix://")
+			if socket != "/var/run/docker.sock" {
+				return fmt.Errorf("rootless docker is not supported (DOCKER_HOST=%s)", host)
+			}
+		} else {
+			return fmt.Errorf("rootless docker is not supported (DOCKER_HOST=%s)", host)
+		}
+	}
+	if _, err := os.Stat("/var/run/docker.sock"); err == nil {
+		return nil
+	}
+	if rootlessDockerSocketExists() {
+		return fmt.Errorf("rootless docker is not supported; enable rootful docker on the host")
+	}
+	return nil
+}
+
+func rootlessDockerSocketExists() bool {
+	entries, err := os.ReadDir("/run/user")
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		socket := filepath.Join("/run/user", entry.Name(), "docker.sock")
+		info, err := os.Stat(socket)
+		if err != nil {
+			continue
+		}
+		if info.Mode()&os.ModeSocket != 0 {
+			return true
+		}
+	}
+	return false
 }

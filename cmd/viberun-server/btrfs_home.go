@@ -156,14 +156,14 @@ func ensureSparseFile(path string, size int64, create bool) (bool, error) {
 }
 
 func ensureBtrfsTools() error {
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("viberun-server must run as root; re-run with sudo")
+	}
 	required := []string{"btrfs", "mkfs.btrfs", "losetup", "mount", "umount"}
 	for _, name := range required {
 		if _, err := exec.LookPath(name); err != nil {
 			return fmt.Errorf("missing %s on host; rerun bootstrap to install btrfs-progs", name)
 		}
-	}
-	if _, err := exec.LookPath("sudo"); err != nil && os.Geteuid() != 0 {
-		return fmt.Errorf("sudo is required to manage btrfs volumes; rerun bootstrap with sudo access")
 	}
 	return nil
 }

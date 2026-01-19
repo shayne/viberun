@@ -45,6 +45,7 @@ func Resolve(raw string, cfg config.Config) (Resolved, error) {
 	}
 
 	alias, host = resolveHostAlias(host, cfg)
+	host = ensureDefaultUser(host, "root")
 
 	return Resolved{App: app, Host: host, HostAlias: alias}, nil
 }
@@ -59,6 +60,7 @@ func ResolveHost(raw string, cfg config.Config) (ResolvedHost, error) {
 	}
 
 	alias, host := resolveHostAlias(host, cfg)
+	host = ensureDefaultUser(host, "root")
 	return ResolvedHost{Host: host, HostAlias: alias}, nil
 }
 
@@ -87,4 +89,18 @@ func resolveHostAlias(host string, cfg config.Config) (string, string) {
 		}
 	}
 	return "", host
+}
+
+func ensureDefaultUser(host string, user string) string {
+	host = strings.TrimSpace(host)
+	if host == "" || user == "" {
+		return host
+	}
+	if strings.Contains(host, "@") {
+		return host
+	}
+	if parts := strings.SplitN(host, "://", 2); len(parts) == 2 {
+		return parts[0] + "://" + user + "@" + parts[1]
+	}
+	return user + "@" + host
 }
