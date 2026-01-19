@@ -68,6 +68,7 @@ vrctl service add <app> \
 
 ## Language/tooling preferences
 - Prefer typed Python (type annotations) and use uv exclusively for env/deps and running (`uv init`, `uv add`, `uv run`); avoid pip/venv directly.
+- When invoking Python directly, use `python` (it maps to Python 3 in the container).
 - Or use Node with TypeScript only (.ts). The base image ships a recent Node (22+) so prefer native TypeScript execution with `node`. If that fails, run TS via `npx -y tsx` (still TypeScript).
 - Never use plain JavaScript unless the user explicitly asks for it.
 

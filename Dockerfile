@@ -25,6 +25,7 @@ RUN apt-get update \
     s6 \
     python3 \
     python3-venv \
+    python-is-python3 \
     sudo \
     tmux \
     tzdata \
