@@ -101,7 +101,7 @@ func (q *restoreQueue) Finish() {
 func main() {
 	args := os.Args[1:]
 	if len(args) == 0 || hasHelpFlag(args) {
-		fmt.Fprintln(os.Stderr, "Usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|shell|port|delete|exists]")
+		fmt.Fprintln(os.Stderr, "Usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|update|shell|port|delete|exists]")
 		os.Exit(2)
 	}
 	result, err := yargs.ParseFlags[serverFlags](args)
@@ -111,7 +111,7 @@ func main() {
 	}
 
 	if len(result.Args) < 1 || len(result.Args) > 3 {
-		fmt.Fprintln(os.Stderr, "Usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|shell|port|delete|exists]")
+		fmt.Fprintln(os.Stderr, "Usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|update|shell|port|delete|exists]")
 		os.Exit(2)
 	}
 	args = result.Args
@@ -248,6 +248,51 @@ func main() {
 		return
 	}
 
+	if action == "update" {
+		if !exists {
+			fmt.Fprintln(os.Stderr, "cannot update: app container does not exist")
+			os.Exit(1)
+		}
+		if _, ok, err := ensureHomeVolume(app, false); err != nil || !ok {
+			if err == nil {
+				err = fmt.Errorf("app volume does not exist")
+			}
+			fmt.Fprintf(os.Stderr, "failed to access app volume: %v\n", err)
+			os.Exit(1)
+		}
+		ui := newAppProgress(app)
+		ui.Start()
+		ui.Step("Pull image")
+		if err := runDockerCommandOutput("pull", defaultImage); err != nil {
+			ui.Fail("failed")
+			fmt.Fprintf(os.Stderr, "failed to pull image: %v\n", err)
+			os.Exit(1)
+		}
+		ui.Done("")
+		ui.Step("Recreate container")
+		if err := runDockerCommandOutput("rm", "-f", containerName); err != nil {
+			ui.Fail("failed")
+			fmt.Fprintf(os.Stderr, "failed to remove container: %v\n", err)
+			os.Exit(1)
+		}
+		if err := dockerRun(containerName, app, port); err != nil {
+			ui.Fail("failed")
+			fmt.Fprintf(os.Stderr, "failed to create container: %v\n", err)
+			os.Exit(1)
+		}
+		ui.Done("")
+		ui.Stop()
+		_ = clearUpdateStatus(app)
+		if stateDirty {
+			if err := server.SaveState(statePath, state); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to save server state: %v\n", err)
+				os.Exit(1)
+			}
+		}
+		fmt.Fprintf(os.Stdout, "Updated app %s\n", app)
+		return
+	}
+
 	if action == "restore" {
 		ref, err := resolveSnapshotRef(app, actionArgs[0])
 		if err != nil {
@@ -371,6 +416,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "failed to start host rpc: %v\n", err)
 			os.Exit(1)
 		}
+		stopUpdates := startUpdateWatcher(app, containerName, time.Hour)
 		for key, value := range bundleEnv {
 			extraEnv[key] = value
 		}
@@ -382,16 +428,25 @@ func main() {
 				if hostRPC != nil {
 					_ = hostRPC.Close()
 				}
+				if stopUpdates != nil {
+					stopUpdates()
+				}
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
 		}
 		if err := runInteractiveSession(containerName, app, port, agentArgs, extraEnv, restoreQueue); err != nil {
+			if stopUpdates != nil {
+				stopUpdates()
+			}
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				os.Exit(exitErr.ExitCode())
 			}
 			fmt.Fprintf(os.Stderr, "session ended: %v\n", err)
 			os.Exit(1)
+		}
+		if stopUpdates != nil {
+			stopUpdates()
 		}
 		if hostRPC != nil {
 			_ = hostRPC.Close()
@@ -410,6 +465,9 @@ func parseAction(args []string) (string, []string, error) {
 	if len(args) == 1 && args[0] == "snapshots" {
 		return "snapshots", nil, nil
 	}
+	if len(args) == 1 && args[0] == "update" {
+		return "update", nil, nil
+	}
 	if len(args) == 1 && args[0] == "shell" {
 		return "shell", nil, nil
 	}
@@ -425,7 +483,7 @@ func parseAction(args []string) (string, []string, error) {
 	if len(args) == 2 && args[0] == "restore" && strings.TrimSpace(args[1]) != "" {
 		return "restore", []string{strings.TrimSpace(args[1])}, nil
 	}
-	return "", nil, fmt.Errorf("usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|shell|port|delete|exists]")
+	return "", nil, fmt.Errorf("usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|update|shell|port|delete|exists]")
 }
 
 func hasHelpFlag(args []string) bool {

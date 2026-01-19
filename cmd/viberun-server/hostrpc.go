@@ -23,12 +23,14 @@ import (
 const hostRPCContainerDir = "/var/run/viberun-hostrpc"
 
 type hostRPCConfig struct {
-	HostDir            string
-	HostSocket         string
-	HostTokenFile      string
-	ContainerDir       string
-	ContainerSocket    string
-	ContainerTokenFile string
+	HostDir             string
+	HostSocket          string
+	HostTokenFile       string
+	HostUpdateFile      string
+	ContainerDir        string
+	ContainerSocket     string
+	ContainerTokenFile  string
+	ContainerUpdateFile string
 }
 
 type hostRPCServer struct {
@@ -53,12 +55,14 @@ func hostRPCConfigForAppBase(app string, baseDir string) hostRPCConfig {
 	safe := sanitizeHostRPCName(app)
 	hostDir := filepath.Join(baseDir, safe)
 	return hostRPCConfig{
-		HostDir:            hostDir,
-		HostSocket:         filepath.Join(hostDir, "rpc.sock"),
-		HostTokenFile:      filepath.Join(hostDir, "token"),
-		ContainerDir:       hostRPCContainerDir,
-		ContainerSocket:    filepath.Join(hostRPCContainerDir, "rpc.sock"),
-		ContainerTokenFile: filepath.Join(hostRPCContainerDir, "token"),
+		HostDir:             hostDir,
+		HostSocket:          filepath.Join(hostDir, "rpc.sock"),
+		HostTokenFile:       filepath.Join(hostDir, "token"),
+		HostUpdateFile:      filepath.Join(hostDir, "update.json"),
+		ContainerDir:        hostRPCContainerDir,
+		ContainerSocket:     filepath.Join(hostRPCContainerDir, "rpc.sock"),
+		ContainerTokenFile:  filepath.Join(hostRPCContainerDir, "token"),
+		ContainerUpdateFile: filepath.Join(hostRPCContainerDir, "update.json"),
 	}
 }
 
@@ -111,6 +115,7 @@ func startHostRPC(app string, containerName string, port int, snapshotFn func(co
 		return nil, nil, err
 	}
 	_ = os.Remove(cfg.HostSocket)
+	_ = os.Remove(cfg.HostUpdateFile)
 	token, err := randomHostRPCToken()
 	if err != nil {
 		return nil, nil, err
@@ -163,6 +168,8 @@ func (s *hostRPCServer) Close() error {
 	}
 	_ = os.Remove(s.hostSocket)
 	_ = os.Remove(s.hostTokenFile)
+	cfg := hostRPCConfigForApp(s.app)
+	_ = os.Remove(cfg.HostUpdateFile)
 	return nil
 }
 

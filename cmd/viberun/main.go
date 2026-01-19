@@ -68,7 +68,7 @@ type runFlags struct {
 
 type runArgs struct {
 	Target string `pos:"0" help:"app or app@host"`
-	Action string `pos:"1?" help:"snapshot|snapshots|restore|shell"`
+	Action string `pos:"1?" help:"snapshot|snapshots|restore|update|shell"`
 	Value  string `pos:"2?" help:"snapshot name for restore"`
 }
 
@@ -106,7 +106,7 @@ var helpConfig = yargs.HelpConfig{
 		"run": {
 			Name:        "run",
 			Description: "Run or manage an app session",
-			Usage:       "<app> [snapshot|snapshots|restore <snapshot>|shell]",
+			Usage:       "<app> [snapshot|snapshots|restore <snapshot>|update|shell]",
 			Hidden:      true,
 		},
 		"config": {
