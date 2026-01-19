@@ -44,12 +44,19 @@ func main() {
 	}
 }
 
+var (
+	version   = "dev"
+	commit    = ""
+	buildDate = ""
+)
+
 func runCLI() error {
-	args := ensureRunSubcommand(os.Args[1:])
+	args := ensureRunSubcommand(normalizeArgs(os.Args[1:]))
 	handlers := map[string]yargs.SubcommandHandler{
 		"run":       handleRunCommand,
 		"config":    handleConfigCommand,
 		"bootstrap": handleBootstrapCommand,
+		"version":   handleVersionCommand,
 	}
 	if err := yargs.RunSubcommands(context.Background(), args, helpConfig, struct{}{}, handlers); err != nil {
 		if errors.Is(err, yargs.ErrShown) {
@@ -94,6 +101,9 @@ var helpConfig = yargs.HelpConfig{
 		Name:        "viberun",
 		Description: "CLI-first agent app host",
 		Examples: []string{
+			"viberun --help",
+			"viberun help run",
+			"viberun --version",
 			"viberun myapp",
 			"viberun myapp snapshot",
 			"viberun myapp restore latest",
@@ -107,7 +117,14 @@ var helpConfig = yargs.HelpConfig{
 			Name:        "run",
 			Description: "Run or manage an app session",
 			Usage:       "<app> [snapshot|snapshots|restore <snapshot>|update|shell]",
-			Hidden:      true,
+			Examples: []string{
+				"viberun myapp",
+				"viberun myapp snapshot",
+				"viberun myapp restore latest",
+				"viberun myapp shell",
+				"viberun myapp --delete -y",
+			},
+			Hidden: true,
 		},
 		"config": {
 			Name:        "config",
@@ -118,7 +135,53 @@ var helpConfig = yargs.HelpConfig{
 			Description: "Install or update the host-side server and image",
 			Usage:       "[<host>]",
 		},
+		"version": {
+			Name:        "version",
+			Description: "Show CLI version",
+		},
 	},
+}
+
+func normalizeArgs(args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	if args[0] == "--version" {
+		return append([]string{"version"}, args[1:]...)
+	}
+	if args[0] == "help" {
+		return rewriteHelpArgs(args[1:])
+	}
+	return args
+}
+
+func rewriteHelpArgs(args []string) []string {
+	if len(args) == 0 {
+		return []string{"--help"}
+	}
+	helpFlag := "--help"
+	for _, arg := range args {
+		if arg == "--help-llm" {
+			helpFlag = "--help-llm"
+			break
+		}
+	}
+	if isHelpFlag(args[0]) || args[0] == "--help-llm" {
+		return []string{helpFlag}
+	}
+	if isKnownCommand(args[0]) {
+		return []string{args[0], helpFlag}
+	}
+	return []string{"run", helpFlag}
+}
+
+func isKnownCommand(value string) bool {
+	switch value {
+	case "run", "config", "bootstrap", "version":
+		return true
+	default:
+		return false
+	}
 }
 
 func ensureRunSubcommand(args []string) []string {
@@ -132,15 +195,10 @@ func ensureRunSubcommand(args []string) []string {
 	if cmd == "" {
 		return args
 	}
-	if cmd == "help" {
-		return []string{"--help"}
-	}
-	switch cmd {
-	case "run", "config", "bootstrap":
+	if isKnownCommand(cmd) {
 		return args
-	default:
-		return append([]string{"run"}, args...)
 	}
+	return append([]string{"run"}, args...)
 }
 
 func isHelpFlag(value string) bool {
@@ -153,13 +211,38 @@ func isHelpFlag(value string) bool {
 }
 
 func firstNonFlag(args []string) string {
+	skipNext := false
 	for _, arg := range args {
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		if arg == "--" {
+			return ""
+		}
 		if strings.HasPrefix(arg, "-") {
+			if strings.HasPrefix(arg, "--") {
+				if strings.Contains(arg, "=") {
+					continue
+				}
+				if consumesValue(arg) {
+					skipNext = true
+				}
+			}
 			continue
 		}
 		return arg
 	}
 	return ""
+}
+
+func consumesValue(flag string) bool {
+	switch flag {
+	case "--agent", "--host", "--default-host", "--set-host", "--local-path":
+		return true
+	default:
+		return false
+	}
 }
 
 func handleRunCommand(_ context.Context, args []string) error {
@@ -180,6 +263,18 @@ func handleConfigCommand(_ context.Context, args []string) error {
 
 func handleBootstrapCommand(_ context.Context, args []string) error {
 	handleBootstrap(args)
+	return nil
+}
+
+func handleVersionCommand(_ context.Context, args []string) error {
+	_, err := yargs.ParseAndHandleHelp[struct{}, struct{}, struct{}](args, helpConfig)
+	if errors.Is(err, yargs.ErrShown) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stdout, versionString())
 	return nil
 }
 
@@ -628,6 +723,24 @@ func maybeClearDefaultAgentOnFailure(cfg config.Config, cfgPath string, flags ru
 		fmt.Fprintf(os.Stderr, "test the agent locally: viberun %s shell, then run: %s %s --help\n", app, runner, pkg)
 	}
 	fmt.Fprintf(os.Stderr, "then retry with --agent %s:%s or set it as default with: viberun config --agent %s:%s\n", runner, pkg, runner, pkg)
+}
+
+func versionString() string {
+	trimmed := strings.TrimSpace(version)
+	if trimmed == "" {
+		trimmed = "dev"
+	}
+	extra := []string{}
+	if strings.TrimSpace(commit) != "" {
+		extra = append(extra, strings.TrimSpace(commit))
+	}
+	if strings.TrimSpace(buildDate) != "" {
+		extra = append(extra, strings.TrimSpace(buildDate))
+	}
+	if len(extra) == 0 {
+		return trimmed
+	}
+	return fmt.Sprintf("%s (%s)", trimmed, strings.Join(extra, " "))
 }
 
 func looksLikeCustomAgentFailure(output string) bool {

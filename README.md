@@ -87,6 +87,7 @@ viberun myapp restore latest
 viberun myapp --delete -y
 viberun bootstrap [<host>]
 viberun config --host myhost --agent codex
+viberun version
 ```
 
 <details>

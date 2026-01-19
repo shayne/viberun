@@ -29,7 +29,16 @@ func TestEnsureRunSubcommandDefaultRun(t *testing.T) {
 func TestEnsureRunSubcommandHelp(t *testing.T) {
 	args := []string{"help"}
 	want := []string{"--help"}
-	got := ensureRunSubcommand(args)
+	got := ensureRunSubcommand(normalizeArgs(args))
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+}
+
+func TestNormalizeArgsHelpSubcommand(t *testing.T) {
+	args := []string{"help", "config"}
+	want := []string{"config", "--help"}
+	got := normalizeArgs(args)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected %v, got %v", want, got)
 	}

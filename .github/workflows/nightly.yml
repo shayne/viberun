@@ -64,8 +64,12 @@ jobs:
       - name: Build
         run: |
           mkdir -p dist
+          VERSION=nightly-${GITHUB_SHA::7}
+          COMMIT=${GITHUB_SHA}
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-            go build -o dist/${{ matrix.asset }} ./cmd/viberun
+            go build -ldflags "-X github.com/shayne/viberun/cmd/viberun.version=${VERSION} -X github.com/shayne/viberun/cmd/viberun.commit=${COMMIT} -X github.com/shayne/viberun/cmd/viberun.buildDate=${BUILD_DATE}" \
+            -o dist/${{ matrix.asset }} ./cmd/viberun
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
