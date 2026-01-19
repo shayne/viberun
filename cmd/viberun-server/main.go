@@ -662,6 +662,22 @@ func dockerExec(name string, agentArgs []string, extraEnv map[string]string) err
 	if agentCheck := strings.TrimSpace(os.Getenv("VIBERUN_AGENT_CHECK")); agentCheck != "" {
 		env["VIBERUN_AGENT_CHECK"] = agentCheck
 	}
+	if forwardAgentEnabled() {
+		if socketPath, ok := sshAuthSocketPath(); ok {
+			socketDir := filepath.Dir(socketPath)
+			mounted, err := containerHasMountSource(name, socketDir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to inspect agent forwarding mount: %v\n", err)
+			} else if !mounted {
+				fmt.Fprintln(os.Stderr, "SSH agent forwarding isn't available in this container. Run `viberun --forward-agent <app> update` to enable it.")
+			} else {
+				env["SSH_AUTH_SOCK"] = socketPath
+				_ = runDockerCommandOutput("exec", name, "tmux", "set-environment", "-g", "SSH_AUTH_SOCK", socketPath)
+			}
+		} else {
+			_ = runDockerCommandOutput("exec", name, "tmux", "set-environment", "-g", "-u", "SSH_AUTH_SOCK")
+		}
+	}
 	for key, value := range extraEnv {
 		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
 			continue
@@ -1166,6 +1182,15 @@ func dockerRunArgs(name string, app string, port int, image string) []string {
 			fmt.Sprintf("VIBERUN_XDG_OPEN_SOCKET=%s", socketPath),
 		)
 	}
+	if socketPath, ok := sshAuthSocketPath(); ok {
+		socketDir := filepath.Dir(socketPath)
+		args = append(args,
+			"-v",
+			fmt.Sprintf("%s:%s", socketDir, socketDir),
+			"-e",
+			fmt.Sprintf("SSH_AUTH_SOCK=%s", socketPath),
+		)
+	}
 	args = append(args, image, "/usr/bin/s6-svscan", "/home/viberun/.local/services")
 	return args
 }
@@ -1199,6 +1224,22 @@ func xdgOpenSocketPath() (string, bool) {
 	return "", false
 }
 
+func sshAuthSocketPath() (string, bool) {
+	if !forwardAgentEnabled() {
+		return "", false
+	}
+	socket := strings.TrimSpace(os.Getenv("SSH_AUTH_SOCK"))
+	if socket == "" {
+		return "", false
+	}
+	if isSocket(socket) {
+		ensureAgentSocketAccess(socket)
+		return socket, true
+	}
+	fmt.Fprintf(os.Stderr, "warning: VIBERUN_FORWARD_AGENT is set but SSH_AUTH_SOCK is not a socket at %s\n", socket)
+	return "", false
+}
+
 func waitForSocket(path string, attempts int, delay time.Duration) bool {
 	if attempts < 1 {
 		attempts = 1
@@ -1222,10 +1263,37 @@ func autoCreateEnabled() bool {
 	}
 }
 
+func forwardAgentEnabled() bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv("VIBERUN_FORWARD_AGENT")))
+	switch value {
+	case "1", "true", "yes", "y":
+		return true
+	default:
+		return false
+	}
+}
+
 func isSocket(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil {
 		return false
 	}
 	return info.Mode()&os.ModeSocket != 0
+}
+
+func ensureAgentSocketAccess(socketPath string) {
+	dir := filepath.Dir(socketPath)
+	if err := chmodPath(dir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to chmod SSH agent dir %s: %v\n", dir, err)
+	}
+	if err := chmodPath(socketPath, 0o666); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to chmod SSH agent socket %s: %v\n", socketPath, err)
+	}
+}
+
+func chmodPath(path string, mode os.FileMode) error {
+	if err := os.Chmod(path, mode); err == nil {
+		return nil
+	}
+	return runHostCommand("chmod", fmt.Sprintf("%#o", mode), path).Run()
 }

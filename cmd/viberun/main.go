@@ -68,9 +68,10 @@ func runCLI() error {
 }
 
 type runFlags struct {
-	Agent  string `flag:"agent" help:"agent provider to run (codex, claude, gemini, ampcode, opencode, or npx:<pkg>/uvx:<pkg>)"`
-	Delete bool   `flag:"delete" help:"delete the app and snapshots"`
-	Yes    bool   `flag:"yes" short:"y" help:"skip confirmation prompts"`
+	Agent        string `flag:"agent" help:"agent provider to run (codex, claude, gemini, ampcode, opencode, or npx:<pkg>/uvx:<pkg>)"`
+	ForwardAgent bool   `flag:"forward-agent" short:"A" help:"forward local SSH agent into the container"`
+	Delete       bool   `flag:"delete" help:"delete the app and snapshots"`
+	Yes          bool   `flag:"yes" short:"y" help:"skip confirmation prompts"`
 }
 
 type runArgs struct {
@@ -489,7 +490,7 @@ func configFlagsEmpty(flags configFlags) bool {
 func runApp(flags runFlags, args runArgs) error {
 	targetArg := strings.TrimSpace(args.Target)
 	if targetArg == "" {
-		exitUsage("Usage: viberun [--agent provider] <app> | viberun [--agent provider] <app>@<host> | viberun [--agent provider] <app> snapshot | viberun [--agent provider] <app> snapshots | viberun [--agent provider] <app> restore <snapshot> | viberun <app> shell | viberun <app> --delete [-y] | viberun bootstrap [<host>] | viberun config [options]")
+		exitUsage("Usage: viberun [--agent provider] [--forward-agent|-A] <app> | viberun [--agent provider] [--forward-agent|-A] <app>@<host> | viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun [--agent provider] [--forward-agent|-A] <app> restore <snapshot> | viberun <app> shell | viberun <app> --delete [-y] | viberun bootstrap [<host>] | viberun config [options]")
 	}
 
 	actionArgs := []string{}
@@ -499,31 +500,31 @@ func runApp(flags runFlags, args runArgs) error {
 		switch action {
 		case "snapshot":
 			if value != "" {
-				exitUsage("Usage: viberun [--agent provider] <app> snapshot | viberun [--agent provider] <app> snapshots | viberun <app> shell")
+				exitUsage("Usage: viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun <app> shell")
 			}
 			actionArgs = []string{"snapshot"}
 		case "snapshots":
 			if value != "" {
-				exitUsage("Usage: viberun [--agent provider] <app> snapshot | viberun [--agent provider] <app> snapshots | viberun <app> shell")
+				exitUsage("Usage: viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun <app> shell")
 			}
 			actionArgs = []string{"snapshots"}
 		case "shell":
 			if value != "" {
-				exitUsage("Usage: viberun [--agent provider] <app> snapshot | viberun [--agent provider] <app> snapshots | viberun <app> shell")
+				exitUsage("Usage: viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun <app> shell")
 			}
 			actionArgs = []string{"shell"}
 		case "restore":
 			if value == "" {
-				exitUsage("Usage: viberun [--agent provider] <app> restore <snapshot>")
+				exitUsage("Usage: viberun [--agent provider] [--forward-agent|-A] <app> restore <snapshot>")
 			}
 			actionArgs = []string{"restore", value}
 		default:
-			exitUsage("Usage: viberun [--agent provider] <app> snapshot | viberun [--agent provider] <app> snapshots | viberun [--agent provider] <app> restore <snapshot> | viberun <app> shell")
+			exitUsage("Usage: viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun [--agent provider] [--forward-agent|-A] <app> restore <snapshot> | viberun <app> shell")
 		}
 	}
 	if flags.Delete {
 		if len(actionArgs) != 0 {
-			exitUsage("Usage: viberun [--delete] <app> | viberun [--agent provider] <app> snapshot | viberun [--agent provider] <app> snapshots | viberun [--agent provider] <app> restore <snapshot> | viberun <app> shell")
+			exitUsage("Usage: viberun [--delete] <app> | viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun [--agent provider] [--forward-agent|-A] <app> restore <snapshot> | viberun <app> shell")
 		}
 		if !flags.Yes {
 			if !promptDelete(targetArg) {
@@ -588,6 +589,9 @@ func runApp(flags runFlags, args runArgs) error {
 		if colorTerm := strings.TrimSpace(os.Getenv("COLORTERM")); colorTerm != "" {
 			extraEnv["COLORTERM"] = colorTerm
 		}
+	}
+	if flags.ForwardAgent {
+		extraEnv["VIBERUN_FORWARD_AGENT"] = "1"
 	}
 	if interactive && tty {
 		exists, err := remoteContainerExists(resolved, agentProvider)
@@ -666,6 +670,9 @@ func runApp(flags runFlags, args runArgs) error {
 	}
 
 	sshArgs := sshcmd.BuildArgsWithForwards(resolved.Host, remoteArgs, tty, nil, remoteSocket)
+	if flags.ForwardAgent {
+		sshArgs = append([]string{"-A"}, sshArgs...)
+	}
 	cmd := exec.Command("ssh", sshArgs...)
 	cmd.Env = normalizedSshEnv()
 	cmd.Stdin = os.Stdin

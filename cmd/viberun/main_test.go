@@ -53,6 +53,15 @@ func TestEnsureRunSubcommandWithAgentFlag(t *testing.T) {
 	}
 }
 
+func TestEnsureRunSubcommandWithForwardAgentFlag(t *testing.T) {
+	args := []string{"-A", "myapp"}
+	want := []string{"run", "-A", "myapp"}
+	got := ensureRunSubcommand(args)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+}
+
 func TestShellQuote(t *testing.T) {
 	cases := map[string]string{
 		"":    "''",
