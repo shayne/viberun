@@ -90,13 +90,13 @@ type runFlags struct {
 	ForwardAgent bool   `flag:"forward-agent" short:"A" help:"forward local SSH agent into the container"`
 	Delete       bool   `flag:"delete" help:"delete the app and snapshots (alias: --remove)"`
 	Yes          bool   `flag:"yes" short:"y" help:"skip confirmation prompts"`
-	Open         bool   `flag:"open" help:"open the public URL in a browser (url command only)"`
-	MakePublic   bool   `flag:"make-public" help:"make the app URL public (url command only)"`
-	MakePrivate  bool   `flag:"make-private" help:"make the app URL private (url command only)"`
-	DisableURL   bool   `flag:"disable" help:"disable the public URL (url command only)"`
-	EnableURL    bool   `flag:"enable" help:"enable the public URL (url command only)"`
-	Domain       string `flag:"domain" help:"set a custom domain for the app URL (url command only)"`
-	ClearDomain  bool   `flag:"clear-domain" help:"clear the custom domain (url command only)"`
+	Open         bool   `flag:"open" help:"open the app URL in a browser (url command only)"`
+	MakePublic   bool   `flag:"make-public" help:"allow anyone to access the app URL (url command only)"`
+	RequireLogin bool   `flag:"require-login" help:"require login for the app URL (url command only)"`
+	DisableURL   bool   `flag:"disable" help:"disable the app URL (url command only)"`
+	EnableURL    bool   `flag:"enable" help:"enable the app URL (url command only)"`
+	SetDomain    string `flag:"set-domain" help:"set a full domain for the app URL (url command only)"`
+	ResetDomain  bool   `flag:"reset-domain" help:"reset the app URL to the default domain (url command only)"`
 }
 
 type runArgs struct {
@@ -183,12 +183,12 @@ var helpConfig = yargs.HelpConfig{
 		},
 		"proxy": {
 			Name:        "proxy",
-			Description: "Configure public URLs via the host proxy",
+			Description: "Configure app URLs via the host proxy",
 			Usage:       "setup [<host>]",
 		},
 		"users": {
 			Name:        "users",
-			Description: "Manage public URL users",
+			Description: "Manage URL users",
 			Usage:       "list | add --username <u> | remove --username <u> | set-password --username <u>",
 		},
 		"wipe": {
@@ -308,6 +308,10 @@ func consumesValue(flag string) bool {
 
 func handleRunCommand(_ context.Context, args []string) error {
 	args = normalizeRunArgs(args)
+	accessFlags, err := parseAccessFlagValues(args)
+	if err != nil {
+		return err
+	}
 	result, err := yargs.ParseAndHandleHelp[struct{}, runFlags, runArgs](args, helpConfig)
 	if errors.Is(err, yargs.ErrShown) {
 		return nil
@@ -315,7 +319,7 @@ func handleRunCommand(_ context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	return runApp(result.SubCommandFlags, result.Args)
+	return runApp(result.SubCommandFlags, result.Args, accessFlags)
 }
 
 func normalizeRunArgs(args []string) []string {
@@ -335,6 +339,58 @@ func normalizeRunArgs(args []string) []string {
 		out[i] = arg
 	}
 	return out
+}
+
+type boolFlagValue struct {
+	set   bool
+	value bool
+}
+
+type accessFlagValues struct {
+	makePublic   boolFlagValue
+	requireLogin boolFlagValue
+}
+
+func parseAccessFlagValues(args []string) (accessFlagValues, error) {
+	makePublic, err := parseBoolFlagValue(args, "make-public")
+	if err != nil {
+		return accessFlagValues{}, err
+	}
+	requireLogin, err := parseBoolFlagValue(args, "require-login")
+	if err != nil {
+		return accessFlagValues{}, err
+	}
+	return accessFlagValues{makePublic: makePublic, requireLogin: requireLogin}, nil
+}
+
+func parseBoolFlagValue(args []string, name string) (boolFlagValue, error) {
+	flag := "--" + name
+	prefix := flag + "="
+	var value boolFlagValue
+	for _, arg := range args {
+		if arg == flag {
+			if value.set {
+				return value, fmt.Errorf("%s specified more than once", flag)
+			}
+			value = boolFlagValue{set: true, value: true}
+			continue
+		}
+		if strings.HasPrefix(arg, prefix) {
+			if value.set {
+				return value, fmt.Errorf("%s specified more than once", flag)
+			}
+			raw := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(arg, prefix)))
+			switch raw {
+			case "true", "1":
+				value = boolFlagValue{set: true, value: true}
+			case "false", "0":
+				value = boolFlagValue{set: true, value: false}
+			default:
+				return value, fmt.Errorf("invalid value for %s (expected true or false)", flag)
+			}
+		}
+	}
+	return value, nil
 }
 
 func handleConfigCommand(_ context.Context, args []string) error {
@@ -573,7 +629,7 @@ func handleBootstrap(args []string) {
 				fmt.Fprintf(os.Stderr, "proxy setup failed: %v\n", err)
 			}
 		} else {
-			fmt.Fprintln(os.Stdout, "Set up public URLs later with: viberun proxy setup")
+			fmt.Fprintln(os.Stdout, "Set up a public domain name later with: viberun proxy setup")
 		}
 	}
 	fmt.Fprintln(os.Stdout, "Bootstrap complete.")
@@ -779,7 +835,7 @@ func handleWipe(args []string) {
 
 func promptProxySetup() bool {
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Fprint(os.Stdout, "Set up public internet URLs? [y/N]: ")
+	fmt.Fprint(os.Stdout, "Set up a public domain name? [y/N]: ")
 	input, err := reader.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return false
@@ -828,7 +884,7 @@ func printProxySetupInstructions(domain string, publicIP string, username string
 	fmt.Fprintf(os.Stdout, "  Example URL: https://myapp.%s\n", domain)
 	if strings.TrimSpace(username) != "" {
 		fmt.Fprintln(os.Stdout, "Access:")
-		fmt.Fprintln(os.Stdout, "  URLs are private by default.")
+		fmt.Fprintln(os.Stdout, "  All apps require login by default.")
 		fmt.Fprintf(os.Stdout, "  Log in as %s with the password you just set.\n", username)
 	}
 	fmt.Fprintln(os.Stdout, "Firewall:")
@@ -1064,23 +1120,49 @@ func runRemoteSetUsers(host string, app string, users []string) error {
 	return err
 }
 
-func applyURLUpdates(resolved target.Resolved, flags runFlags) error {
-	if flags.MakePublic && flags.MakePrivate {
-		return fmt.Errorf("choose either --make-public or --make-private")
+type accessOverride struct {
+	set    bool
+	access string
+}
+
+func resolveAccessOverride(flags accessFlagValues) (accessOverride, error) {
+	var override accessOverride
+	if flags.makePublic.set {
+		override = accessOverride{set: true, access: accessFromMakePublic(flags.makePublic.value)}
 	}
+	if flags.requireLogin.set {
+		desired := accessFromRequireLogin(flags.requireLogin.value)
+		if override.set && override.access != desired {
+			return accessOverride{}, fmt.Errorf("choose either --make-public or --require-login")
+		}
+		override = accessOverride{set: true, access: desired}
+	}
+	return override, nil
+}
+
+func accessFromMakePublic(value bool) string {
+	if value {
+		return "public"
+	}
+	return "private"
+}
+
+func accessFromRequireLogin(value bool) string {
+	if value {
+		return "private"
+	}
+	return "public"
+}
+
+func applyURLUpdates(resolved target.Resolved, flags runFlags, access accessOverride) error {
 	if flags.DisableURL && flags.EnableURL {
 		return fmt.Errorf("choose either --disable or --enable")
 	}
-	if flags.Domain != "" && flags.ClearDomain {
-		return fmt.Errorf("choose either --domain or --clear-domain")
+	if flags.SetDomain != "" && flags.ResetDomain {
+		return fmt.Errorf("choose either --set-domain or --reset-domain")
 	}
-	if flags.MakePublic {
-		if err := runRemoteSetAccess(resolved.Host, resolved.App, "public"); err != nil {
-			return err
-		}
-	}
-	if flags.MakePrivate {
-		if err := runRemoteSetAccess(resolved.Host, resolved.App, "private"); err != nil {
+	if access.set {
+		if err := runRemoteSetAccess(resolved.Host, resolved.App, access.access); err != nil {
 			return err
 		}
 	}
@@ -1094,12 +1176,12 @@ func applyURLUpdates(resolved target.Resolved, flags runFlags) error {
 			return err
 		}
 	}
-	if flags.Domain != "" {
-		if err := runRemoteSetDomain(resolved.Host, resolved.App, flags.Domain, false); err != nil {
+	if flags.SetDomain != "" {
+		if err := runRemoteSetDomain(resolved.Host, resolved.App, flags.SetDomain, false); err != nil {
 			return err
 		}
 	}
-	if flags.ClearDomain {
+	if flags.ResetDomain {
 		if err := runRemoteSetDomain(resolved.Host, resolved.App, "", true); err != nil {
 			return err
 		}
@@ -1116,10 +1198,10 @@ func promptRecreateApps(host string) error {
 		return nil
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-		fmt.Fprintln(os.Stdout, "Public URLs changed. Re-run `viberun <app> update` to refresh environment variables.")
+		fmt.Fprintln(os.Stdout, "App URLs changed. Re-run `viberun <app> update` to refresh environment variables.")
 		return nil
 	}
-	prompt := fmt.Sprintf("Recreate %d app container(s) to set public URL env vars? [Y/n]: ", len(apps))
+	prompt := fmt.Sprintf("Recreate %d app container(s) to set URL env vars? [Y/n]: ", len(apps))
 	if !promptYesNoDefaultYes(prompt) {
 		return nil
 	}
@@ -1137,10 +1219,10 @@ func maybeRecreateAppForURLChange(resolved target.Resolved, before proxyInfo, af
 		return nil
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-		fmt.Fprintf(os.Stdout, "Public URL changed for %s. Run `viberun %s update` to refresh environment variables.\n", resolved.App, resolved.App)
+		fmt.Fprintf(os.Stdout, "App URL changed for %s. Run `viberun %s update` to refresh environment variables.\n", resolved.App, resolved.App)
 		return nil
 	}
-	prompt := fmt.Sprintf("Public URL changed for %s. Recreate container to update env vars? [Y/n]: ", resolved.App)
+	prompt := fmt.Sprintf("App URL changed for %s. Recreate container to update env vars? [Y/n]: ", resolved.App)
 	if !promptYesNoDefaultYes(prompt) {
 		return nil
 	}
@@ -1151,11 +1233,11 @@ func printURLSummary(out io.Writer, info proxyInfo) {
 	styler := newURLStyler(out)
 	fmt.Fprintf(out, "%s %s\n", styler.label("App:"), styler.value(info.App))
 	if info.Disabled {
-		fmt.Fprintf(out, "%s %s\n", styler.label("Status:"), styler.status("disabled (no public URL)"))
+		fmt.Fprintf(out, "%s %s\n", styler.label("Access:"), styler.status("disabled (no URL)"))
 	} else if info.Access == "public" {
-		fmt.Fprintf(out, "%s %s\n", styler.label("Status:"), styler.status("public"))
+		fmt.Fprintf(out, "%s %s\n", styler.label("Access:"), styler.status("public"))
 	} else {
-		fmt.Fprintf(out, "%s %s\n", styler.label("Status:"), styler.status("private"))
+		fmt.Fprintf(out, "%s %s\n", styler.label("Access:"), styler.status("requires login"))
 	}
 	if info.URL != "" {
 		fmt.Fprintf(out, "%s %s\n", styler.label("URL:"), styler.link(info.URL))
@@ -1176,19 +1258,19 @@ func printURLSummary(out io.Writer, info proxyInfo) {
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, styler.header("Commands:"))
 	styler.commands(out, []commandLine{
-		{cmd: fmt.Sprintf("viberun %s url --domain <domain>", info.App), desc: "set a custom domain"},
-		{cmd: fmt.Sprintf("viberun %s url --clear-domain", info.App), desc: "clear the custom domain"},
+		{cmd: fmt.Sprintf("viberun %s url --set-domain <domain>", info.App), desc: "set a full domain (e.g., myblog.com)"},
+		{cmd: fmt.Sprintf("viberun %s url --reset-domain", info.App), desc: "reset to the default domain"},
 		{cmd: fmt.Sprintf("viberun %s users", info.App), desc: "manage who can access this app"},
 		{cmd: fmt.Sprintf("viberun %s url --make-public", info.App), desc: "allow anyone to access"},
-		{cmd: fmt.Sprintf("viberun %s url --make-private", info.App), desc: "require login to access"},
-		{cmd: fmt.Sprintf("viberun %s url --disable", info.App), desc: "turn off the public URL"},
-		{cmd: fmt.Sprintf("viberun %s url --enable", info.App), desc: "turn the public URL back on"},
+		{cmd: fmt.Sprintf("viberun %s url --require-login", info.App), desc: "require login to access"},
+		{cmd: fmt.Sprintf("viberun %s url --disable", info.App), desc: "turn off the URL"},
+		{cmd: fmt.Sprintf("viberun %s url --enable", info.App), desc: "turn the URL back on"},
 	})
 }
 
 func printURLActionResult(out io.Writer, info proxyInfo) {
 	styler := newURLStyler(out)
-	status := "private"
+	status := "requires login"
 	if info.Disabled {
 		status = "disabled"
 	} else if info.Access == "public" {
@@ -1286,9 +1368,9 @@ func (s urlStyler) status(text string) string {
 	switch text {
 	case "public":
 		return s.publicStyle.Render(text)
-	case "private":
+	case "private", "requires login":
 		return s.privateStyle.Render(text)
-	case "disabled", "disabled (no public URL)":
+	case "disabled", "disabled (no URL)":
 		return s.disabledStyle.Render(text)
 	default:
 		return s.valueStyle.Render(text)
@@ -1424,7 +1506,7 @@ func configFlagsEmpty(flags configFlags) bool {
 		len(flags.SetHosts) == 0
 }
 
-func runApp(flags runFlags, args runArgs) error {
+func runApp(flags runFlags, args runArgs, accessFlags accessFlagValues) error {
 	targetArg := strings.TrimSpace(args.Target)
 	if targetArg == "" {
 		exitUsage(runUsageFull())
@@ -1487,8 +1569,12 @@ func runApp(flags runFlags, args runArgs) error {
 	if flags.Open && !wantURL {
 		exitUsage("Usage: viberun <app> url [flags]")
 	}
-	if (flags.MakePublic || flags.MakePrivate || flags.DisableURL || flags.EnableURL || flags.Domain != "" || flags.ClearDomain) && !wantURL {
-		exitUsage("Usage: viberun <app> url [--make-public|--make-private|--disable|--enable|--domain <domain>|--clear-domain]")
+	accessOverride, err := resolveAccessOverride(accessFlags)
+	if err != nil {
+		exitUsage(err.Error())
+	}
+	if (accessOverride.set || flags.DisableURL || flags.EnableURL || flags.SetDomain != "" || flags.ResetDomain) && !wantURL {
+		exitUsage("Usage: viberun <app> url [--make-public|--require-login|--disable|--enable|--set-domain <domain>|--reset-domain]")
 	}
 	if wantUsers && !term.IsTerminal(int(os.Stdin.Fd())) {
 		return fmt.Errorf("app users requires a TTY")
@@ -1531,7 +1617,7 @@ func runApp(flags runFlags, args runArgs) error {
 	}
 
 	if wantURL {
-		changesRequested := flags.MakePublic || flags.MakePrivate || flags.DisableURL || flags.EnableURL || flags.Domain != "" || flags.ClearDomain
+		changesRequested := accessOverride.set || flags.DisableURL || flags.EnableURL || flags.SetDomain != "" || flags.ResetDomain
 		var before proxyInfo
 		if changesRequested {
 			info, err := fetchProxyInfo(resolved)
@@ -1539,7 +1625,7 @@ func runApp(flags runFlags, args runArgs) error {
 				return err
 			}
 			before = info
-			if err := applyURLUpdates(resolved, flags); err != nil {
+			if err := applyURLUpdates(resolved, flags, accessOverride); err != nil {
 				return err
 			}
 		}
@@ -1554,7 +1640,7 @@ func runApp(flags runFlags, args runArgs) error {
 		}
 		if flags.Open {
 			if info.Disabled || strings.TrimSpace(info.URL) == "" {
-				return fmt.Errorf("public URL is not available")
+				return fmt.Errorf("URL is not available")
 			}
 			if err := openURL(info.URL); err != nil {
 				return err
@@ -2064,9 +2150,34 @@ pull_image() {
   if [ -z "$image" ]; then
     return 0
   fi
+  if [ -t 1 ]; then
+    tmpfile="$(mktemp)"
+    spin=( '⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏' )
+    set +e
+    ($SUDO docker pull --quiet "$image" >"$tmpfile" 2>&1) &
+    pid=$!
+    idx=0
+    while kill -0 "$pid" 2>/dev/null; do
+      printf "\r%s Pulling %s" "${spin[$idx]}" "$image"
+      idx=$(( (idx + 1) % ${#spin[@]} ))
+      sleep 0.12
+    done
+    wait "$pid"
+    status=$?
+    set -e
+    if [ "$status" -ne 0 ]; then
+      output="$(cat "$tmpfile")"
+      printf "\r✖ Pulling %s failed\n" "$image"
+      echo "warning: failed to pull image $image: $output" >&2
+      rm -f "$tmpfile"
+      return 0
+    fi
+    printf "\r✔ Pulled %s\n" "$image"
+    rm -f "$tmpfile"
+    return 0
+  fi
   if ! output="$($SUDO docker pull --quiet "$image" 2>&1)"; then
     echo "warning: failed to pull image $image: $output" >&2
-    return 0
   fi
   return 0
 }

@@ -27,7 +27,7 @@ func PromptProxyDomain(in io.Reader, out io.Writer, prefix string) (string, erro
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().
-				Title("Domain for public URLs").
+				Title("Public domain name").
 				Description(fmt.Sprintf("Your apps will be available at %s<domain>", prompt)).
 				Prompt(promptText).
 				Placeholder("mydomain.com").

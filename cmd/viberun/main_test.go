@@ -190,7 +190,7 @@ func TestPrintURLSummary(t *testing.T) {
 	if !strings.Contains(out, "App: myapp") {
 		t.Fatalf("expected app line in output: %s", out)
 	}
-	if !strings.Contains(out, "Status: private") {
+	if !strings.Contains(out, "Access: requires login") {
 		t.Fatalf("expected status line in output: %s", out)
 	}
 	if !strings.Contains(out, "DNS: create an A record for myapp.example.com -> 1.2.3.4") {
@@ -200,6 +200,9 @@ func TestPrintURLSummary(t *testing.T) {
 		t.Fatalf("expected commands header in output: %s", out)
 	}
 	if !strings.Contains(out, "viberun myapp url --make-public") {
+		t.Fatalf("expected commands list in output: %s", out)
+	}
+	if !strings.Contains(out, "viberun myapp url --require-login") {
 		t.Fatalf("expected commands list in output: %s", out)
 	}
 }
