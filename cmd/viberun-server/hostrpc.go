@@ -300,7 +300,12 @@ func (s *hostRPCServer) handleProxyPublic(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := syncProxyWithState(cfg, mustLoadState()); err != nil {
+	state, err := loadState()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := syncProxyWithState(cfg, state); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -329,7 +334,12 @@ func (s *hostRPCServer) handleProxyPrivate(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := syncProxyWithState(cfg, mustLoadState()); err != nil {
+	state, err := loadState()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := syncProxyWithState(cfg, state); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -355,7 +365,12 @@ func (s *hostRPCServer) handleProxyDisable(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := syncProxyWithState(cfg, mustLoadState()); err != nil {
+	state, err := loadState()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := syncProxyWithState(cfg, state); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -381,7 +396,12 @@ func (s *hostRPCServer) handleProxyEnable(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := syncProxyWithState(cfg, mustLoadState()); err != nil {
+	state, err := loadState()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := syncProxyWithState(cfg, state); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

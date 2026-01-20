@@ -49,9 +49,63 @@ import (
 
 func main() {
 	if err := runCLI(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
+		reportCLIError(err)
 	}
+}
+
+type usageError struct {
+	message string
+}
+
+func (e usageError) Error() string {
+	return e.message
+}
+
+type silentError struct {
+	err error
+}
+
+func (e silentError) Error() string {
+	return e.err.Error()
+}
+
+func (e silentError) Unwrap() error {
+	return e.err
+}
+
+type missingHostError struct{}
+
+func (missingHostError) Error() string {
+	return "missing host configuration"
+}
+
+func reportCLIError(err error) {
+	var usageErr usageError
+	if errors.As(err, &usageErr) {
+		fmt.Fprintln(os.Stderr, usageErr.message)
+		return
+	}
+	var hostErr missingHostError
+	if errors.As(err, &hostErr) {
+		printMissingHostMessage()
+		return
+	}
+	var quietErr silentError
+	if errors.As(err, &quietErr) {
+		return
+	}
+	fmt.Fprintln(os.Stderr, err.Error())
+}
+
+func newUsageError(message string) error {
+	return usageError{message: message}
+}
+
+func newSilentError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return silentError{err: err}
 }
 
 var (
@@ -394,13 +448,11 @@ func parseBoolFlagValue(args []string, name string) (boolFlagValue, error) {
 }
 
 func handleConfigCommand(_ context.Context, args []string) error {
-	handleConfig(args)
-	return nil
+	return handleConfig(args)
 }
 
 func handleBootstrapCommand(_ context.Context, args []string) error {
-	handleBootstrap(args)
-	return nil
+	return handleBootstrap(args)
 }
 
 func handleVersionCommand(_ context.Context, args []string) error {
@@ -415,33 +467,29 @@ func handleVersionCommand(_ context.Context, args []string) error {
 	return nil
 }
 
-func handleConfig(args []string) {
+func handleConfig(args []string) error {
 	result, err := yargs.ParseAndHandleHelp[struct{}, configFlags, struct{}](args, helpConfig)
 	if errors.Is(err, yargs.ErrShown) {
-		return
+		return nil
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(2)
+		return err
 	}
 
 	flags := result.SubCommandFlags
 	cfg, path, err := config.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 
 	if configFlagsEmpty(flags) {
-		showConfig(cfg, path)
-		return
+		return showConfig(cfg, path)
 	}
 
 	updated := false
 	resolvedHost := strings.TrimSpace(flags.DefaultHost)
 	if strings.TrimSpace(flags.Host) != "" && resolvedHost != "" && strings.TrimSpace(flags.Host) != resolvedHost {
-		fmt.Fprintln(os.Stderr, "conflicting --host and --default-host values")
-		os.Exit(2)
+		return newUsageError("conflicting --host and --default-host values")
 	}
 	if strings.TrimSpace(flags.Host) != "" {
 		resolvedHost = strings.TrimSpace(flags.Host)
@@ -461,67 +509,60 @@ func handleConfig(args []string) {
 		for _, entry := range flags.SetHosts {
 			parts := strings.SplitN(entry, "=", 2)
 			if len(parts) != 2 {
-				fmt.Fprintf(os.Stderr, "invalid host mapping %q (expected alias=host)\n", entry)
-				os.Exit(2)
+				return newUsageError(fmt.Sprintf("invalid host mapping %q (expected alias=host)", entry))
 			}
 			alias := strings.TrimSpace(parts[0])
 			host := strings.TrimSpace(parts[1])
 			if alias == "" || host == "" {
-				fmt.Fprintf(os.Stderr, "invalid host mapping %q (expected alias=host)\n", entry)
-				os.Exit(2)
+				return newUsageError(fmt.Sprintf("invalid host mapping %q (expected alias=host)", entry))
 			}
 			cfg.Hosts[alias] = host
 		}
 		updated = true
 	}
 	if !updated {
-		showConfig(cfg, path)
-		return
+		return showConfig(cfg, path)
 	}
 
 	if err := config.Save(path, cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to save config: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to save config: %w", err)
 	}
 	fmt.Fprintf(os.Stdout, "wrote config to %s\n", path)
+	return nil
 }
 
-func showConfig(cfg config.Config, path string) {
+func showConfig(cfg config.Config, path string) error {
 	data, err := toml.Marshal(cfg)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to format config: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to format config: %w", err)
 	}
 	fmt.Fprintf(os.Stdout, "Config path: %s\n%s\n", path, string(data))
+	return nil
 }
 
-func handleBootstrap(args []string) {
+func handleBootstrap(args []string) error {
 	result, err := yargs.ParseAndHandleHelp[struct{}, bootstrapFlags, bootstrapArgs](args, helpConfig)
 	if errors.Is(err, yargs.ErrShown) {
-		return
+		return nil
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(2)
+		return err
 	}
 	flags := result.SubCommandFlags
 	hostArg := strings.TrimSpace(result.Args.Host)
 
 	cfg, path, err := config.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 
 	resolved, err := target.ResolveHost(hostArg, cfg)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid host: %v\n", err)
-		os.Exit(2)
+		return newUsageError(fmt.Sprintf("invalid host: %v", err))
 	}
 
 	if _, err := exec.LookPath("ssh"); err != nil {
-		fmt.Fprintln(os.Stderr, "ssh is required but was not found in PATH")
-		os.Exit(1)
+		return fmt.Errorf("ssh is required but was not found in PATH")
 	}
 
 	tty := term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
@@ -557,8 +598,7 @@ func handleBootstrap(args []string) {
 		remotePath, err := stageLocalServerBinary(resolved.Host, localPath)
 		if err != nil {
 			ui.Fail(err.Error())
-			fmt.Fprintf(os.Stderr, "failed to stage local server binary: %v\n", err)
-			os.Exit(1)
+			return newSilentError(fmt.Errorf("failed to stage local server binary: %w", err))
 		}
 		ui.Done("")
 		env = append(env, "VIBERUN_SERVER_LOCAL_PATH="+remotePath)
@@ -569,8 +609,7 @@ func handleBootstrap(args []string) {
 		if err := stageLocalImage(resolved.Host); err != nil {
 			ui.Resume()
 			ui.Fail(err.Error())
-			fmt.Fprintf(os.Stderr, "failed to stage local image: %v\n", err)
-			os.Exit(1)
+			return newSilentError(fmt.Errorf("failed to stage local image: %w", err))
 		}
 		ui.Resume()
 		ui.Done("")
@@ -579,8 +618,7 @@ func handleBootstrap(args []string) {
 		if err := stageLocalProxyImage(resolved.Host); err != nil {
 			ui.Resume()
 			ui.Fail(err.Error())
-			fmt.Fprintf(os.Stderr, "failed to stage local proxy image: %v\n", err)
-			os.Exit(1)
+			return newSilentError(fmt.Errorf("failed to stage local proxy image: %w", err))
 		}
 		ui.Resume()
 		ui.Done("")
@@ -607,10 +645,9 @@ func handleBootstrap(args []string) {
 		ui.Resume()
 		ui.Fail(err.Error())
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
+			return newSilentError(exitErr)
 		}
-		fmt.Fprintf(os.Stderr, "failed to start ssh: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to start ssh: %w", err)
 	}
 	ui.Resume()
 	ui.Done("")
@@ -633,204 +670,175 @@ func handleBootstrap(args []string) {
 		}
 	}
 	fmt.Fprintln(os.Stdout, "Bootstrap complete.")
+	return nil
 }
 
 func handleProxyCommand(_ context.Context, args []string) error {
-	handleProxy(args)
-	return nil
+	return handleProxy(args)
 }
 
 func handleUsersCommand(_ context.Context, args []string) error {
-	handleUsers(args)
-	return nil
+	return handleUsers(args)
 }
 
 func handleWipeCommand(_ context.Context, args []string) error {
-	handleWipe(args)
-	return nil
+	return handleWipe(args)
 }
 
-func handleProxy(args []string) {
+func handleProxy(args []string) error {
 	result, err := yargs.ParseAndHandleHelp[struct{}, struct{}, proxyArgs](args, helpConfig)
 	if errors.Is(err, yargs.ErrShown) {
-		return
+		return nil
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(2)
+		return err
 	}
 	action := strings.TrimSpace(result.Args.Action)
 	if action == "" || action != "setup" {
-		exitUsage("Usage: viberun proxy setup [<host>]")
+		return newUsageError("Usage: viberun proxy setup [<host>]")
 	}
 	hostArg := strings.TrimSpace(result.Args.Host)
 
 	cfg, _, err := config.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 
 	resolved, err := target.ResolveHost(hostArg, cfg)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid host: %v\n", err)
-		os.Exit(2)
+		return newUsageError(fmt.Sprintf("invalid host: %v", err))
 	}
 
 	if _, err := exec.LookPath("ssh"); err != nil {
-		fmt.Fprintln(os.Stderr, "ssh is required but was not found in PATH")
-		os.Exit(1)
+		return fmt.Errorf("ssh is required but was not found in PATH")
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-		fmt.Fprintln(os.Stderr, "proxy setup requires a TTY")
-		os.Exit(1)
+		return fmt.Errorf("proxy setup requires a TTY")
 	}
 	if err := ensureDevServerSynced(resolved.Host); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to sync dev server: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to sync dev server: %w", err)
 	}
 	if err := runProxySetupFlow(resolved.Host); err != nil {
-		fmt.Fprintf(os.Stderr, "proxy setup failed: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("proxy setup failed: %w", err)
 	}
+	return nil
 }
 
 type usersFlags struct {
 	Username string `flag:"username" help:"username"`
 }
 
-func handleUsers(args []string) {
+func handleUsers(args []string) error {
 	result, err := yargs.ParseAndHandleHelp[struct{}, struct{}, usersArgs](args, helpConfig)
 	if errors.Is(err, yargs.ErrShown) {
-		return
+		return nil
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(2)
+		return err
 	}
 	action := strings.TrimSpace(result.Args.Action)
 	if action == "" {
-		exitUsage("Usage: viberun users list|add|remove|set-password [<host>]")
+		return newUsageError("Usage: viberun users list|add|remove|set-password [<host>]")
 	}
 	hostArg := strings.TrimSpace(result.Args.Host)
 
 	cfg, _, err := config.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 	resolved, err := target.ResolveHost(hostArg, cfg)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid host: %v\n", err)
-		os.Exit(2)
+		return newUsageError(fmt.Sprintf("invalid host: %v", err))
 	}
 
 	if _, err := exec.LookPath("ssh"); err != nil {
-		fmt.Fprintln(os.Stderr, "ssh is required but was not found in PATH")
-		os.Exit(1)
+		return fmt.Errorf("ssh is required but was not found in PATH")
 	}
 	if err := ensureDevServerSynced(resolved.Host); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to sync dev server: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to sync dev server: %w", err)
 	}
 
 	switch action {
 	case "list":
 		if err := runRemoteUsersList(resolved.Host); err != nil {
-			fmt.Fprintf(os.Stderr, "users list failed: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("users list failed: %w", err)
 		}
 	case "add", "set-password", "remove":
 		parsed, err := yargs.ParseFlags[usersFlags](args[1:])
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
-			os.Exit(2)
+			return err
 		}
 		username := strings.TrimSpace(parsed.Flags.Username)
 		if username == "" {
-			fmt.Fprintln(os.Stderr, "username is required")
-			os.Exit(2)
+			return newUsageError("username is required")
 		}
 		if action == "remove" {
 			if err := runRemoteUsersRemove(resolved.Host, username); err != nil {
-				fmt.Fprintf(os.Stderr, "users remove failed: %v\n", err)
-				os.Exit(1)
+				return fmt.Errorf("users remove failed: %w", err)
 			}
-			return
+			return nil
 		}
 		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-			fmt.Fprintln(os.Stderr, "user management requires a TTY")
-			os.Exit(1)
+			return fmt.Errorf("user management requires a TTY")
 		}
 		password, err := tui.PromptPassword(os.Stdin, os.Stdout, "Password")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to read password: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("failed to read password: %w", err)
 		}
 		if action == "add" {
 			if err := runRemoteUsersAdd(resolved.Host, username, password); err != nil {
-				fmt.Fprintf(os.Stderr, "users add failed: %v\n", err)
-				os.Exit(1)
+				return fmt.Errorf("users add failed: %w", err)
 			}
 		} else {
 			if err := runRemoteUsersSetPassword(resolved.Host, username, password); err != nil {
-				fmt.Fprintf(os.Stderr, "users set-password failed: %v\n", err)
-				os.Exit(1)
+				return fmt.Errorf("users set-password failed: %w", err)
 			}
 		}
 	default:
-		exitUsage("Usage: viberun users list|add|remove|set-password [<host>]")
+		return newUsageError("Usage: viberun users list|add|remove|set-password [<host>]")
 	}
+	return nil
 }
 
-func handleWipe(args []string) {
+func handleWipe(args []string) error {
 	result, err := yargs.ParseAndHandleHelp[struct{}, struct{}, wipeArgs](args, helpConfig)
 	if errors.Is(err, yargs.ErrShown) {
-		return
+		return nil
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(2)
+		return err
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-		fmt.Fprintln(os.Stderr, "wipe requires a TTY")
-		os.Exit(1)
+		return fmt.Errorf("wipe requires a TTY")
 	}
 	cfg, _, err := config.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 	resolved, err := target.ResolveHost(strings.TrimSpace(result.Args.Host), cfg)
 	if err != nil {
 		if errors.Is(err, target.ErrNoHostConfigured) {
-			printMissingHostMessage()
-			os.Exit(2)
+			return missingHostError{}
 		}
-		fmt.Fprintf(os.Stderr, "invalid host: %v\n", err)
-		os.Exit(2)
+		return newUsageError(fmt.Sprintf("invalid host: %v", err))
 	}
 	if _, err := exec.LookPath("ssh"); err != nil {
-		fmt.Fprintln(os.Stderr, "ssh is required but was not found in PATH")
-		os.Exit(1)
+		return fmt.Errorf("ssh is required but was not found in PATH")
 	}
 	if err := ensureDevServerSynced(resolved.Host); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to sync dev server: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to sync dev server: %w", err)
 	}
 	if err := tui.PromptWipeConfirm(os.Stdin, os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "wipe cancelled: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("wipe cancelled: %w", err)
 	}
 	if err := runRemoteWipe(resolved.Host); err != nil {
-		fmt.Fprintf(os.Stderr, "remote wipe failed: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("remote wipe failed: %w", err)
 	}
 	if err := config.RemoveConfigFiles(); err != nil {
-		fmt.Fprintf(os.Stderr, "local wipe failed: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("local wipe failed: %w", err)
 	}
 	fmt.Fprintln(os.Stdout, "Wipe complete.")
+	return nil
 }
 
 func promptProxySetup() bool {
@@ -1509,7 +1517,7 @@ func configFlagsEmpty(flags configFlags) bool {
 func runApp(flags runFlags, args runArgs, accessFlags accessFlagValues) error {
 	targetArg := strings.TrimSpace(args.Target)
 	if targetArg == "" {
-		exitUsage(runUsageFull())
+		return exitUsage(runUsageFull())
 	}
 
 	actionArgs := []string{}
@@ -1521,41 +1529,41 @@ func runApp(flags runFlags, args runArgs, accessFlags accessFlagValues) error {
 		switch action {
 		case "snapshot":
 			if value != "" {
-				exitUsage(runUsageActions())
+				return exitUsage(runUsageActions())
 			}
 			actionArgs = []string{"snapshot"}
 		case "snapshots":
 			if value != "" {
-				exitUsage(runUsageActions())
+				return exitUsage(runUsageActions())
 			}
 			actionArgs = []string{"snapshots"}
 		case "shell":
 			if value != "" {
-				exitUsage(runUsageActions())
+				return exitUsage(runUsageActions())
 			}
 			actionArgs = []string{"shell"}
 		case "url":
 			if value != "" {
-				exitUsage("Usage: viberun <app> url [flags]")
+				return exitUsage("Usage: viberun <app> url [flags]")
 			}
 			wantURL = true
 		case "users":
 			if value != "" {
-				exitUsage("Usage: viberun <app> users")
+				return exitUsage("Usage: viberun <app> users")
 			}
 			wantUsers = true
 		case "restore":
 			if value == "" {
-				exitUsage(runUsageRestore())
+				return exitUsage(runUsageRestore())
 			}
 			actionArgs = []string{"restore", value}
 		default:
-			exitUsage(runUsageActions())
+			return exitUsage(runUsageActions())
 		}
 	}
 	if flags.Delete {
 		if len(actionArgs) != 0 {
-			exitUsage(runUsageDelete())
+			return exitUsage(runUsageDelete())
 		}
 		if !flags.Yes {
 			if !promptDelete(targetArg) {
@@ -1567,14 +1575,14 @@ func runApp(flags runFlags, args runArgs, accessFlags accessFlagValues) error {
 	}
 
 	if flags.Open && !wantURL {
-		exitUsage("Usage: viberun <app> url [flags]")
+		return exitUsage("Usage: viberun <app> url [flags]")
 	}
 	accessOverride, err := resolveAccessOverride(accessFlags)
 	if err != nil {
-		exitUsage(err.Error())
+		return exitUsage(err.Error())
 	}
 	if (accessOverride.set || flags.DisableURL || flags.EnableURL || flags.SetDomain != "" || flags.ResetDomain) && !wantURL {
-		exitUsage("Usage: viberun <app> url [--make-public|--require-login|--disable|--enable|--set-domain <domain>|--reset-domain]")
+		return exitUsage("Usage: viberun <app> url [--make-public|--require-login|--disable|--enable|--set-domain <domain>|--reset-domain]")
 	}
 	if wantUsers && !term.IsTerminal(int(os.Stdin.Fd())) {
 		return fmt.Errorf("app users requires a TTY")
@@ -1601,10 +1609,9 @@ func runApp(flags runFlags, args runArgs, accessFlags accessFlagValues) error {
 	resolved, err := target.Resolve(targetArg, cfg)
 	if err != nil {
 		if errors.Is(err, target.ErrNoHostConfigured) {
-			printMissingHostMessage()
-			os.Exit(2)
+			return missingHostError{}
 		}
-		exitUsage(fmt.Sprintf("invalid target: %v", err))
+		return exitUsage(fmt.Sprintf("invalid target: %v", err))
 	}
 
 	if _, err := exec.LookPath("ssh"); err != nil {
@@ -1688,7 +1695,7 @@ func runApp(flags runFlags, args runArgs, accessFlags accessFlagValues) error {
 		if !exists {
 			if !promptCreateLocal(resolved.App) {
 				fmt.Fprintln(os.Stderr, "aborted")
-				os.Exit(1)
+				return newSilentError(errors.New("aborted"))
 			}
 			needsCreate = true
 			extraEnv["VIBERUN_AUTO_CREATE"] = "1"
@@ -1792,7 +1799,7 @@ func runApp(flags runFlags, args runArgs, accessFlags accessFlagValues) error {
 			cleanup()
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				maybeClearDefaultAgentOnFailure(cfg, cfgPath, flags, resolved.App, outputTail.String())
-				os.Exit(exitErr.ExitCode())
+				return newSilentError(exitErr)
 			}
 			return fmt.Errorf("failed to start ssh: %w", err)
 		}
@@ -1808,16 +1815,15 @@ func runApp(flags runFlags, args runArgs, accessFlags accessFlagValues) error {
 		cleanup()
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			maybeClearDefaultAgentOnFailure(cfg, cfgPath, flags, resolved.App, outputTail.String())
-			os.Exit(exitErr.ExitCode())
+			return newSilentError(exitErr)
 		}
 		return fmt.Errorf("failed to start ssh: %w", err)
 	}
 	return nil
 }
 
-func exitUsage(message string) {
-	fmt.Fprintln(os.Stderr, message)
-	os.Exit(2)
+func exitUsage(message string) error {
+	return newUsageError(message)
 }
 
 func runUsageFull() string {

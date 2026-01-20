@@ -254,7 +254,11 @@ func handleProxySetAccess(args []string) error {
 	if err := proxy.SaveConfig(path, cfg); err != nil {
 		return err
 	}
-	return syncProxyWithState(cfg, mustLoadState())
+	state, err := loadState()
+	if err != nil {
+		return err
+	}
+	return syncProxyWithState(cfg, state)
 }
 
 type proxyDomainFlags struct {
@@ -296,7 +300,11 @@ func handleProxySetDomain(args []string) error {
 	if err := proxy.SaveConfig(path, cfg); err != nil {
 		return err
 	}
-	return syncProxyWithState(cfg, mustLoadState())
+	state, err := loadState()
+	if err != nil {
+		return err
+	}
+	return syncProxyWithState(cfg, state)
 }
 
 type proxyUsersFlags struct {
@@ -329,7 +337,11 @@ func handleProxySetUsers(args []string) error {
 	if err := proxy.SaveConfig(path, cfg); err != nil {
 		return err
 	}
-	return syncProxyWithState(cfg, mustLoadState())
+	state, err := loadState()
+	if err != nil {
+		return err
+	}
+	return syncProxyWithState(cfg, state)
 }
 
 type proxyDisabledFlags struct {
@@ -364,7 +376,11 @@ func handleProxySetDisabled(args []string) error {
 	if err := proxy.SaveConfig(path, cfg); err != nil {
 		return err
 	}
-	return syncProxyWithState(cfg, mustLoadState())
+	state, err := loadState()
+	if err != nil {
+		return err
+	}
+	return syncProxyWithState(cfg, state)
 }
 
 func setProxyAccess(cfg *proxy.Config, app string, access string) error {
@@ -454,7 +470,11 @@ func handleProxyUsersAdd(args []string) error {
 	if err := proxy.SaveConfig(path, cfg); err != nil {
 		return err
 	}
-	return syncProxyWithState(cfg, mustLoadState())
+	state, err := loadState()
+	if err != nil {
+		return err
+	}
+	return syncProxyWithState(cfg, state)
 }
 
 func handleProxyUsersRemove(args []string) error {
@@ -484,7 +504,11 @@ func handleProxyUsersRemove(args []string) error {
 	if err := proxy.SaveConfig(path, cfg); err != nil {
 		return err
 	}
-	return syncProxyWithState(cfg, mustLoadState())
+	state, err := loadState()
+	if err != nil {
+		return err
+	}
+	return syncProxyWithState(cfg, state)
 }
 
 func handleProxyUsersSetPassword(args []string) error {
@@ -513,7 +537,11 @@ func handleProxyUsersSetPassword(args []string) error {
 	if err := proxy.SaveConfig(path, cfg); err != nil {
 		return err
 	}
-	return syncProxyWithState(cfg, mustLoadState())
+	state, err := loadState()
+	if err != nil {
+		return err
+	}
+	return syncProxyWithState(cfg, state)
 }
 
 func proxyURLForApp(app string) (string, error) {
@@ -782,13 +810,12 @@ func readPasswordIfRequested(enabled bool) (string, error) {
 	return password, nil
 }
 
-func mustLoadState() server.State {
+func loadState() (server.State, error) {
 	state, _, err := server.LoadState()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load server state: %v\n", err)
-		os.Exit(1)
+		return server.State{}, fmt.Errorf("failed to load server state: %w", err)
 	}
-	return state
+	return state, nil
 }
 
 func parseUsersList(raw string, primary string) []string {

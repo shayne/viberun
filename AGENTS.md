@@ -1,5 +1,11 @@
 # Repository Guidelines
 
+## Conventions Updates
+- If you introduce a new repo rule or convention, add it to the Conventions Log below with the date and a short summary.
+
+## Conventions Log
+- 2026-01-20: Avoid `os.Exit` in the codebase; bubble errors up and let `main()` return.
+
 ## Project Structure & Module Organization
 - `cmd/`: Go entrypoints (`viberun`, `viberun-server`). Main CLI and host-side server logic live here.
 - `internal/`: Core packages (config, server state, SSH args, target parsing, TUI helpers).
