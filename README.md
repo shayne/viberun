@@ -75,6 +75,7 @@ http://localhost:8080
 ```
 
 Open it in your browser.
+If you've configured app URLs, `viberun <app> url` shows the HTTPS address.
 
 ## Common commands
 
@@ -86,9 +87,14 @@ viberun myapp shell
 viberun myapp snapshot
 viberun myapp snapshots
 viberun myapp restore latest
+viberun myapp url
+viberun myapp users
 viberun myapp --delete -y
 viberun myapp update
 viberun bootstrap [<host>]
+viberun proxy setup
+viberun users list
+viberun wipe
 viberun config --host myhost --agent codex
 viberun version
 ```
@@ -105,11 +111,13 @@ viberun version
   - [Session lifecycle](#session-lifecycle)
   - [Bootstrap pipeline](#bootstrap-pipeline)
   - [Networking and ports](#networking-and-ports)
+  - [App URLs and proxy](#app-urls-and-proxy)
   - [Snapshots and restore](#snapshots-and-restore)
   - [Host RPC bridge](#host-rpc-bridge)
   - [Configuration and state](#configuration-and-state)
   - [Agents](#agents)
   - [Security model](#security-model)
+  - [Wipe (safety)](#wipe-safety)
   - [Repository layout](#repository-layout)
   - [Troubleshooting](#troubleshooting)
 
@@ -151,6 +159,8 @@ mise exec -- go vet ./...
 ```bash
 mise run build:image
 # fallback: docker build -t viberun .
+# proxy image (Caddy + auth):
+docker build -f Dockerfile.proxy -t viberun-proxy .
 ```
 
 ### E2E and integration
@@ -194,6 +204,8 @@ container port 8080
   -> host port (assigned per app)
     -> ssh -L localhost:<port>
       -> http://localhost:<port>
+    -> (optional) host proxy (Caddy)
+      -> https://<app>.<domain>
 ```
 
 ### Core components
@@ -203,6 +215,7 @@ container port 8080
 - Container: `viberun-<app>` Docker container built from the `viberun:latest` image.
 - Agent: runs inside the container in a tmux session (default provider: `codex`).
 - Host RPC: local Unix socket used by the container to request snapshot/restore operations.
+- Proxy (optional): `viberun-proxy` (Caddy + `viberun-auth`) for app URLs and login.
 
 ### Session lifecycle
 
@@ -221,11 +234,14 @@ The bootstrap script (run on the host) does the following:
 - Pulls the `viberun` container image from GHCR (unless using local image mode).
 - Downloads and installs the `viberun-server` binary.
 
+If bootstrap is run from a TTY, it will offer to set up a public domain name (same as `viberun proxy setup`).
+
 Useful bootstrap overrides:
 
 - `VIBERUN_SERVER_REPO`: GitHub repo for releases (default `shayne/viberun`).
 - `VIBERUN_SERVER_VERSION`: release tag or `latest`.
 - `VIBERUN_IMAGE`: container image override.
+- `VIBERUN_PROXY_IMAGE`: proxy container image override (for app URLs).
 - `VIBERUN_SERVER_INSTALL_DIR`: install directory on the host.
 - `VIBERUN_SERVER_BIN`: server binary name on the host.
 - `VIBERUN_SERVER_LOCAL_PATH`: use a local server binary staged over SSH.
@@ -236,6 +252,30 @@ Useful bootstrap overrides:
 - Each app container exposes port `8080` internally.
 - The host port is assigned per app (starting at `8080`) and stored in the host server state.
 - `viberun` opens an SSH local forward so `http://localhost:<port>` connects to the host port.
+- If the proxy is configured, apps can also be served over HTTPS at `https://<app>.<domain>` (or a custom domain). Access requires login by default and can be made public per app.
+
+### App URLs and proxy
+
+`viberun` can optionally expose apps via a host-side proxy (Caddy + `viberun-auth`).
+Set it up once per host:
+
+```bash
+viberun proxy setup [<host>]
+```
+
+You'll be prompted for a base domain and public IP (for DNS), plus a primary username/password.
+Create an A record (or wildcard) pointing to the host's public IP.
+
+After setup:
+
+- `viberun <app> url` shows the current URL and access status.
+- `viberun <app> url --make-public` or `--require-login` toggles access (default requires login).
+- `viberun <app> url --set-domain <domain>` or `--reset-domain` manages custom domains.
+- `viberun <app> url --disable` or `--enable` turns the URL off/on.
+- `viberun <app> url --open` opens the URL in your browser.
+- `viberun users ...` manages login accounts; `viberun <app> users` controls who can access the app.
+
+If URL settings change, run `viberun <app> update` to refresh `VIBERUN_PUBLIC_URL` and `VIBERUN_PUBLIC_DOMAIN` inside the container.
 
 ### Snapshots and restore
 
@@ -266,6 +306,9 @@ Local config lives at `~/.config/viberun/config.toml` (or `$XDG_CONFIG_HOME/vibe
 
 Host server state lives at `~/.config/viberun/server-state.json` (or `$XDG_CONFIG_HOME/viberun/server-state.json`) and stores the port mapping for each app.
 
+Proxy config (when enabled) lives at `/var/lib/viberun/proxy.toml` (or `$VIBERUN_PROXY_CONFIG_PATH`) and stores the base domain, access rules, and users.
+When enabled, the server injects `VIBERUN_PUBLIC_URL` and `VIBERUN_PUBLIC_DOMAIN` into containers.
+
 ### Agents
 
 Supported agent providers:
@@ -273,6 +316,10 @@ Supported agent providers:
 - `codex` (default)
 - `claude`
 - `gemini`
+- `ampcode` (alias: `amp`)
+- `opencode`
+
+Custom agents can be run via `npx:<pkg>` or `uvx:<pkg>` (for example, `viberun --agent npx:@sourcegraph/amp@latest <app>`).
 
 Set globally with `viberun config --agent <provider>` or per-run with `viberun --agent <provider> <app>`.
 To forward your local SSH agent into the container, use `viberun --forward-agent <app>`. For existing apps, run `viberun <app> update` once to recreate the container with the agent socket mounted.
@@ -284,15 +331,32 @@ Base skills are shipped in `/opt/viberun/skills` and symlinked into each agent's
 - All control traffic goes over SSH; the server is invoked on demand and does not expose a network port.
 - The host RPC socket is local-only and protected by filesystem permissions and a per-session token.
 - Containers are isolated by Docker and only the app port is exposed.
+- App URLs are optional: the proxy requires login by default and can be made public per app with `viberun <app> url --make-public`.
+
+### Wipe (safety)
+
+`viberun wipe [<host>]` deletes local config and wipes all viberun data on the host.
+It requires a TTY and asks you to type `WIPE`.
+
+On the host, wipe removes:
+
+- All containers named `viberun-*`, any containers using `viberun` images, and the proxy container (default `viberun-proxy`).
+- All `viberun` images (including the proxy image).
+- App data and snapshots under `/var/lib/viberun` (including per-app Btrfs volumes).
+- Host RPC sockets in `/tmp/viberun-hostrpc` and `/var/run/viberun-hostrpc`.
+- `/etc/viberun`, `/etc/sudoers.d/viberun-server`, and `/usr/local/bin/viberun-server`.
+
+Locally, it removes `~/.config/viberun/config.toml` (and legacy config if present).
 
 ### Repository layout
 
-- `cmd/`: Go entrypoints (`viberun`, `viberun-server`).
+- `cmd/`: Go entrypoints (`viberun`, `viberun-server`, `viberun-auth`).
 - `internal/`: Core packages (config, server state, SSH args, target parsing, TUI helpers).
 - `bin/`: Helper scripts for installs, integration/E2E flows, and container utilities.
 - `skills/`: Codex skill definitions used inside containers.
-- `config/`: Shell/TMUX/Starship config and runtime assets.
+- `config/`: Shell/TMUX/Starship config, auth assets, and runtime configs.
 - `Dockerfile`: Base container image definition.
+- `Dockerfile.proxy`: Proxy image definition (Caddy + auth).
 
 ### Troubleshooting
 
@@ -301,3 +365,4 @@ Base skills are shipped in `/opt/viberun/skills` and symlinked into each agent's
 - `missing btrfs on host`: rerun bootstrap to install `btrfs-progs` and ensure sudo access.
 - `no host provided and no default host configured`: run `viberun config --host myhost` or use `myapp@host`.
 - `container image architecture mismatch`: delete and recreate the app (`viberun <app> --delete -y`).
+- `proxy is not configured`: run `viberun proxy setup` (then retry `viberun <app> url`).
