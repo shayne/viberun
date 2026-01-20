@@ -16,12 +16,14 @@ RUN apt-get update \
     ca-certificates \
     curl \
     gnupg \
+    git \
     iproute2 \
     iputils-ping \
     lsof \
     ncurses-bin \
     ncurses-term \
     nano \
+    openssh-client \
     ripgrep \
     s6 \
     python3 \
@@ -31,6 +33,7 @@ RUN apt-get update \
     tmux \
     tzdata \
     vim \
+    wget \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
@@ -45,6 +48,17 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_UNMANAGED_INSTALL="/usr/
 
 RUN curl -fsSL https://starship.rs/install.sh | sh -s -- -y \
   && mkdir -p ${VIBERUN_HOME}/.config
+
+RUN set -eux; \
+  mkdir -p -m 755 /etc/apt/keyrings; \
+  wget -nv -O /etc/apt/keyrings/githubcli-archive-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg; \
+  chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+    > /etc/apt/sources.list.d/github-cli.list; \
+  apt-get update; \
+  apt-get install -y --no-install-recommends gh; \
+  apt-get clean; \
+  rm -rf /var/lib/apt/lists/*
 
 RUN printf '%s\n' \
   'Defaults:viberun !authenticate' \
@@ -102,7 +116,8 @@ RUN mkdir -p ${VIBERUN_HOME}/.local/services ${VIBERUN_HOME}/.local/logs ${VIBER
   && chown -R ${VIBERUN_USER}:${VIBERUN_USER} ${VIBERUN_HOME}
 
 COPY bin/viberun-entrypoint /usr/local/bin/viberun-entrypoint
-RUN chmod +x /usr/local/bin/viberun-entrypoint
+COPY bin/viberun-env /usr/local/bin/viberun-env
+RUN chmod +x /usr/local/bin/viberun-entrypoint /usr/local/bin/viberun-env
 
 USER ${VIBERUN_USER}
 

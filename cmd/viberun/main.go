@@ -1737,6 +1737,16 @@ func runApp(flags runFlags, args runArgs, accessFlags accessFlagValues) error {
 			}
 		}
 	}
+	if interactive {
+		cfg, err := discoverLocalUserConfig()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "user config discovery failed: %v\n", err)
+		} else if encoded, err := encodeUserConfig(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to encode user config: %v\n", err)
+		} else if encoded != "" {
+			extraEnv["VIBERUN_USER_CONFIG"] = encoded
+		}
+	}
 	var openServer *http.Server
 	var remoteSocket *sshcmd.RemoteSocketForward
 	var forwardCmd *exec.Cmd

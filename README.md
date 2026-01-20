@@ -104,6 +104,7 @@ viberun version
 
 - [Quick start (end-to-end)](#quick-start-end-to-end)
 - [Common commands](#common-commands)
+- [Git setup](#git-setup)
 - [Development](#development)
 - [Architecture](#architecture)
   - [High-level flow](#high-level-flow)
@@ -122,6 +123,17 @@ viberun version
   - [Troubleshooting](#troubleshooting)
 
 </details>
+
+## Git setup
+
+Git, SSH, and the GitHub CLI are installed in containers. viberun seeds `git config --global user.name` and `user.email` from your local Git config into a host-managed config file that is mounted into each app container and applied on startup. This removes the common "first commit" setup step without auto-authing you.
+
+Choose one of these auth paths:
+
+- **SSH (agent forwarding)**: Run `viberun --forward-agent <app>`. For existing apps, run `viberun <app> update` once to recreate the container with the agent socket mounted. Then `ssh -T git@github.com` inside the container to verify access.
+- **HTTPS (GitHub CLI)**: Run `gh auth login` and choose HTTPS, then `gh auth setup-git`. Verify with `gh auth status`.
+
+If you update your local Git identity later, restart the app container (or run `viberun <app> update`) to re-apply the new values on startup.
 
 ## Development
 

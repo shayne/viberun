@@ -67,6 +67,7 @@ func dockerExecCombinedOutput(name string, command []string, env map[string]stri
 	if len(command) == 0 {
 		return "", errors.New("command is required")
 	}
+	command = wrapWithEnv(command)
 	filteredEnv := map[string]string{}
 	for key, value := range env {
 		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {

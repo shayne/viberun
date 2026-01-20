@@ -219,6 +219,9 @@ func runServer() error {
 	if err := ensureRootfulDocker(); err != nil {
 		return err
 	}
+	if err := updateUserConfigFromEnv(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to update user config: %v\n", err)
+	}
 
 	state, statePath, err := server.LoadState()
 	if err != nil {
@@ -698,11 +701,13 @@ func dockerRun(name string, app string, port int) error {
 	if err := ensureHostRPCDir(app); err != nil {
 		return err
 	}
-	extraEnv, err := proxyEnvForApp(app)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to load proxy config for %s: %v\n", app, err)
+	if err := ensureUserConfigFile(); err != nil {
+		return err
 	}
-	args := dockerRunArgs(name, app, port, defaultImage, extraEnv)
+	if err := ensureContainerConfig(app, name, port); err != nil {
+		return err
+	}
+	args := dockerRunArgs(name, app, port, defaultImage)
 	return runDockerCommandOutput(args...)
 }
 
@@ -724,6 +729,9 @@ func dockerExec(name string, agentArgs []string, extraEnv map[string]string) err
 	}
 	if agentCheck := strings.TrimSpace(os.Getenv("VIBERUN_AGENT_CHECK")); agentCheck != "" {
 		env["VIBERUN_AGENT_CHECK"] = agentCheck
+	}
+	if socket := strings.TrimSpace(os.Getenv("VIBERUN_XDG_OPEN_SOCKET")); socket != "" {
+		env["VIBERUN_XDG_OPEN_SOCKET"] = socket
 	}
 	if forwardAgentEnabled() {
 		if socketPath, ok := sshAuthSocketPath(); ok {
@@ -747,6 +755,7 @@ func dockerExec(name string, agentArgs []string, extraEnv map[string]string) err
 		}
 		env[key] = value
 	}
+	agentArgs = wrapWithEnv(agentArgs)
 	args := dockerExecArgs(name, agentArgs, tty, env)
 	cmd := exec.Command("docker", args...)
 	cmd.Stdin = os.Stdin
@@ -790,6 +799,17 @@ func dockerExecArgs(name string, agentArgs []string, tty bool, env map[string]st
 	}
 	args = append(args, name)
 	return append(args, agentArgs...)
+}
+
+func wrapWithEnv(command []string) []string {
+	if len(command) == 0 {
+		return command
+	}
+	wrapper := "/usr/local/bin/viberun-env"
+	if command[0] == wrapper || command[0] == "viberun-env" {
+		return command
+	}
+	return append([]string{wrapper}, command...)
 }
 
 func explainStoppedContainer(name string) {
@@ -1203,7 +1223,7 @@ func runInteractiveSession(containerName string, app string, port int, agentArgs
 	}
 }
 
-func dockerRunArgs(name string, app string, port int, image string, extraEnv map[string]string) []string {
+func dockerRunArgs(name string, app string, port int, image string) []string {
 	hostRPC := hostRPCConfigForApp(app)
 	homeCfg := homeVolumeConfigForApp(app)
 	args := []string{
@@ -1213,29 +1233,6 @@ func dockerRunArgs(name string, app string, port int, image string, extraEnv map
 		name,
 		"-p",
 		fmt.Sprintf("%d:8080", port),
-		"-e",
-		"VIBERUN_APP_PORT=8080",
-		"-e",
-		fmt.Sprintf("VIBERUN_HOST_PORT=%d", port),
-		"-e",
-		fmt.Sprintf("VIBERUN_APP=%s", app),
-		"-e",
-		fmt.Sprintf("VIBERUN_CONTAINER=%s", name),
-		"-e",
-		fmt.Sprintf("VIBERUN_PORT=%d", port),
-	}
-	if len(extraEnv) > 0 {
-		keys := make([]string, 0, len(extraEnv))
-		for key, value := range extraEnv {
-			if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
-				continue
-			}
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			args = append(args, "-e", fmt.Sprintf("%s=%s", key, extraEnv[key]))
-		}
 	}
 	args = append(args,
 		"-v",
@@ -1243,19 +1240,21 @@ func dockerRunArgs(name string, app string, port int, image string, extraEnv map
 	)
 	args = append(args,
 		"-v",
+		fmt.Sprintf("%s:%s:ro", userConfigHostPath, userConfigContainerPath),
+	)
+	args = append(args,
+		"-v",
+		fmt.Sprintf("%s:%s:ro", containerConfigHostPath(app), containerConfigContainerPath),
+	)
+	args = append(args,
+		"-v",
 		fmt.Sprintf("%s:%s", hostRPC.HostDir, hostRPC.ContainerDir),
-		"-e",
-		fmt.Sprintf("VIBERUN_HOST_RPC_SOCKET=%s", hostRPC.ContainerSocket),
-		"-e",
-		fmt.Sprintf("VIBERUN_HOST_RPC_TOKEN_FILE=%s", hostRPC.ContainerTokenFile),
 	)
 	if socketPath, ok := xdgOpenSocketPath(); ok {
 		socketDir := filepath.Dir(socketPath)
 		args = append(args,
 			"-v",
 			fmt.Sprintf("%s:%s", socketDir, socketDir),
-			"-e",
-			fmt.Sprintf("VIBERUN_XDG_OPEN_SOCKET=%s", socketPath),
 		)
 	}
 	if socketPath, ok := sshAuthSocketPath(); ok {
@@ -1263,38 +1262,10 @@ func dockerRunArgs(name string, app string, port int, image string, extraEnv map
 		args = append(args,
 			"-v",
 			fmt.Sprintf("%s:%s", socketDir, socketDir),
-			"-e",
-			fmt.Sprintf("SSH_AUTH_SOCK=%s", socketPath),
 		)
 	}
 	args = append(args, image, "/usr/bin/s6-svscan", "/home/viberun/.local/services")
 	return args
-}
-
-func proxyEnvForApp(app string) (map[string]string, error) {
-	cfg, _, err := proxy.LoadConfig()
-	if err != nil {
-		return nil, err
-	}
-	if !cfg.Enabled || strings.TrimSpace(cfg.BaseDomain) == "" {
-		return nil, nil
-	}
-	host := proxy.PublicHostForApp(cfg, app)
-	if host == "" {
-		return nil, nil
-	}
-	url := proxy.PublicURLForApp(cfg, app)
-	if url == "" {
-		return nil, nil
-	}
-	env := map[string]string{}
-	if key := strings.TrimSpace(cfg.Env.PublicURL); key != "" {
-		env[key] = url
-	}
-	if key := strings.TrimSpace(cfg.Env.PublicDomain); key != "" {
-		env[key] = host
-	}
-	return env, nil
 }
 
 func handleAppsCommand() error {

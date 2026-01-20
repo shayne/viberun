@@ -149,11 +149,7 @@ func startHostRPC(app string, containerName string, port int, snapshotFn func(co
 	go func() {
 		_ = server.httpServer.Serve(listener)
 	}()
-	env := map[string]string{
-		"VIBERUN_HOST_RPC_SOCKET":     cfg.ContainerSocket,
-		"VIBERUN_HOST_RPC_TOKEN_FILE": cfg.ContainerTokenFile,
-	}
-	return server, env, nil
+	return server, map[string]string{}, nil
 }
 
 func (s *hostRPCServer) Close() error {

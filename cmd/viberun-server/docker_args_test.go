@@ -10,8 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/shayne/viberun/internal/proxy"
 )
 
 func hasPair(args []string, key string, value string) bool {
@@ -26,20 +24,20 @@ func hasPair(args []string, key string, value string) bool {
 func TestDockerRunArgsIncludesHostRPCMount(t *testing.T) {
 	t.Setenv("VIBERUN_XDG_OPEN_SOCKET", "")
 	cfg := hostRPCConfigForApp("myapp")
-	args := dockerRunArgs("viberun-myapp", "myapp", 4242, "viberun:test", nil)
+	args := dockerRunArgs("viberun-myapp", "myapp", 4242, "viberun:test")
 
 	homeCfg := homeVolumeConfigForApp("myapp")
 	if !hasPair(args, "-v", fmt.Sprintf("%s:%s", homeCfg.MountDir, "/home/viberun")) {
 		t.Fatalf("expected home volume mount in args: %v", args)
 	}
+	if !hasPair(args, "-v", fmt.Sprintf("%s:%s:ro", userConfigHostPath, userConfigContainerPath)) {
+		t.Fatalf("expected user config mount in args: %v", args)
+	}
+	if !hasPair(args, "-v", fmt.Sprintf("%s:%s:ro", containerConfigHostPath("myapp"), containerConfigContainerPath)) {
+		t.Fatalf("expected container config mount in args: %v", args)
+	}
 	if !hasPair(args, "-v", fmt.Sprintf("%s:%s", cfg.HostDir, cfg.ContainerDir)) {
 		t.Fatalf("expected host rpc mount in args: %v", args)
-	}
-	if !hasPair(args, "-e", fmt.Sprintf("VIBERUN_HOST_RPC_SOCKET=%s", cfg.ContainerSocket)) {
-		t.Fatalf("expected host rpc socket env in args: %v", args)
-	}
-	if !hasPair(args, "-e", fmt.Sprintf("VIBERUN_HOST_RPC_TOKEN_FILE=%s", cfg.ContainerTokenFile)) {
-		t.Fatalf("expected host rpc token env in args: %v", args)
 	}
 }
 
@@ -66,38 +64,8 @@ func TestDockerRunArgsIncludesForwardAgentSocket(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", socketPath)
 	t.Setenv("VIBERUN_XDG_OPEN_SOCKET", "")
 
-	args := dockerRunArgs("viberun-myapp", "myapp", 4242, "viberun:test", nil)
+	args := dockerRunArgs("viberun-myapp", "myapp", 4242, "viberun:test")
 	if !hasPair(args, "-v", fmt.Sprintf("%s:%s", socketDir, socketDir)) {
 		t.Fatalf("expected ssh agent socket mount in args: %v", args)
-	}
-	if !hasPair(args, "-e", fmt.Sprintf("SSH_AUTH_SOCK=%s", socketPath)) {
-		t.Fatalf("expected SSH_AUTH_SOCK env in args: %v", args)
-	}
-}
-
-func TestProxyEnvForApp(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "proxy.toml")
-	t.Setenv("VIBERUN_PROXY_CONFIG_PATH", path)
-	cfg := proxy.Config{
-		Enabled:     true,
-		BaseDomain:  "example.com",
-		PrimaryUser: "root",
-		Users: []proxy.AuthUser{
-			{Username: "root", Email: "root@local", Password: "bcrypt:abc"},
-		},
-		Auth: proxy.AuthConfig{SigningKey: "secret"},
-	}
-	if err := proxy.SaveConfig(path, cfg); err != nil {
-		t.Fatalf("save config: %v", err)
-	}
-	env, err := proxyEnvForApp("myapp")
-	if err != nil {
-		t.Fatalf("proxyEnvForApp: %v", err)
-	}
-	if env[proxy.DefaultEnvPublicURL()] != "https://myapp.example.com" {
-		t.Fatalf("unexpected public url env: %v", env)
-	}
-	if env[proxy.DefaultEnvPublicDomain()] != "myapp.example.com" {
-		t.Fatalf("unexpected public domain env: %v", env)
 	}
 }

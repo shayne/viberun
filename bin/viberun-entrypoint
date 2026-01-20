@@ -17,6 +17,40 @@ seed_file() {
   fi
 }
 
+apply_user_config() {
+  config_path="/opt/viberun/userconfig.json"
+  if [ ! -f "$config_path" ]; then
+    return 0
+  fi
+  python3 - "$config_path" <<'PY'
+import json
+import subprocess
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    sys.exit(0)
+
+git_cfg = data.get("git") or {}
+name = git_cfg.get("name") or ""
+email = git_cfg.get("email") or ""
+
+def set_git(key, value):
+    if not value:
+        return
+    try:
+        subprocess.run(["git", "config", "--global", key, value], check=False)
+    except FileNotFoundError:
+        pass
+
+set_git("user.name", name)
+set_git("user.email", email)
+PY
+}
+
 ensure_dir "${VIBERUN_HOME}/app"
 ensure_dir "${VIBERUN_HOME}/.local/services"
 ensure_dir "${VIBERUN_HOME}/.local/logs"
@@ -31,6 +65,8 @@ ensure_dir "${VIBERUN_HOME}/.opencode"
 seed_file "${TEMPLATE_DIR}/AGENTS.app.md" "${VIBERUN_HOME}/app/AGENTS.md"
 seed_file "${TEMPLATE_DIR}/starship.toml" "${VIBERUN_HOME}/.config/starship.toml"
 seed_file "${TEMPLATE_DIR}/codex-config.toml" "${VIBERUN_HOME}/.codex/config.toml"
+
+apply_user_config
 
 sync_skills() {
   dir="$1"

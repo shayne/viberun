@@ -54,12 +54,8 @@ func TestStartHostRPCSetsEnvAndCreatesFiles(t *testing.T) {
 	}
 	defer func() { _ = server.Close() }()
 
-	cfg := hostRPCConfigForApp(app)
-	if env["VIBERUN_HOST_RPC_SOCKET"] != cfg.ContainerSocket {
-		t.Fatalf("unexpected socket env: %q", env["VIBERUN_HOST_RPC_SOCKET"])
-	}
-	if env["VIBERUN_HOST_RPC_TOKEN_FILE"] != cfg.ContainerTokenFile {
-		t.Fatalf("unexpected token env: %q", env["VIBERUN_HOST_RPC_TOKEN_FILE"])
+	if len(env) != 0 {
+		t.Fatalf("expected no env overrides, got %v", env)
 	}
 	if _, err := os.Stat(server.hostSocket); err != nil {
 		t.Fatalf("expected host socket to exist: %v", err)
