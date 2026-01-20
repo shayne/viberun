@@ -1586,18 +1586,16 @@ func runApp(flags runFlags, args runArgs, accessFlags accessFlagValues) error {
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
-
-	if !wantURL && !wantUsers && strings.TrimSpace(flags.Agent) == "" && strings.TrimSpace(cfg.AgentProvider) == "" && tty {
-		selection, err := tui.SelectDefaultAgent(os.Stdin, os.Stdout)
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(selection) != "" {
-			cfg.AgentProvider = selection
-			if err := config.Save(cfgPath, cfg); err != nil {
-				return fmt.Errorf("failed to save config: %w", err)
-			}
-		}
+	explicitAgent := strings.TrimSpace(flags.Agent)
+	configuredAgent := strings.TrimSpace(cfg.AgentProvider)
+	agentProvider := explicitAgent
+	if agentProvider == "" {
+		agentProvider = configuredAgent
+	}
+	needsAgentPrompt := !wantURL && !wantUsers && agentProvider == "" && tty
+	agentProviderForChecks := agentProvider
+	if agentProviderForChecks == "" {
+		agentProviderForChecks = agents.DefaultProvider()
 	}
 
 	resolved, err := target.Resolve(targetArg, cfg)
@@ -1669,18 +1667,6 @@ func runApp(flags runFlags, args runArgs, accessFlags accessFlagValues) error {
 		return nil
 	}
 
-	agentProvider := cfg.AgentProvider
-	if strings.TrimSpace(agentProvider) == "" {
-		agentProvider = agents.DefaultProvider()
-	}
-	if strings.TrimSpace(flags.Agent) != "" {
-		agentProvider = strings.TrimSpace(flags.Agent)
-	}
-	agentSpec, err := agents.Resolve(agentProvider)
-	if err != nil {
-		return err
-	}
-	agentProvider = agentSpec.Provider
 	if interactive && !tty {
 		return fmt.Errorf("interactive sessions require a TTY; run from a terminal or use snapshot/restore commands")
 	}
@@ -1693,8 +1679,9 @@ func runApp(flags runFlags, args runArgs, accessFlags accessFlagValues) error {
 	if flags.ForwardAgent {
 		extraEnv["VIBERUN_FORWARD_AGENT"] = "1"
 	}
+	needsCreate := false
 	if interactive && tty {
-		exists, err := remoteContainerExists(resolved, agentProvider)
+		exists, err := remoteContainerExists(resolved, agentProviderForChecks)
 		if err != nil {
 			return err
 		}
@@ -1703,19 +1690,43 @@ func runApp(flags runFlags, args runArgs, accessFlags accessFlagValues) error {
 				fmt.Fprintln(os.Stderr, "aborted")
 				os.Exit(1)
 			}
+			needsCreate = true
 			extraEnv["VIBERUN_AUTO_CREATE"] = "1"
-			localAuth, details, err := discoverLocalAuth(agentSpec.ID)
+		}
+	}
+	if needsAgentPrompt {
+		selection, err := tui.SelectDefaultAgent(os.Stdin, os.Stdout)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(selection) != "" {
+			cfg.AgentProvider = selection
+			if err := config.Save(cfgPath, cfg); err != nil {
+				return fmt.Errorf("failed to save config: %w", err)
+			}
+			agentProvider = selection
+		}
+	}
+	if strings.TrimSpace(agentProvider) == "" {
+		agentProvider = agentProviderForChecks
+	}
+	agentSpec, err := agents.Resolve(agentProvider)
+	if err != nil {
+		return err
+	}
+	agentProvider = agentSpec.Provider
+	if interactive && tty && needsCreate {
+		localAuth, details, err := discoverLocalAuth(agentSpec.ID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "auth discovery failed: %v\n", err)
+		} else if localAuth != nil && promptCopyAuth(resolved.App, agentSpec.Label, details) {
+			bundle, err := stageAuthBundle(resolved.Host, localAuth)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "auth discovery failed: %v\n", err)
-			} else if localAuth != nil && promptCopyAuth(resolved.App, agentSpec.Label, details) {
-				bundle, err := stageAuthBundle(resolved.Host, localAuth)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "failed to stage auth: %v\n", err)
-				} else if encoded, err := encodeAuthBundle(bundle); err != nil {
-					fmt.Fprintf(os.Stderr, "failed to encode auth: %v\n", err)
-				} else if encoded != "" {
-					extraEnv["VIBERUN_AUTH_BUNDLE"] = encoded
-				}
+				fmt.Fprintf(os.Stderr, "failed to stage auth: %v\n", err)
+			} else if encoded, err := encodeAuthBundle(bundle); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to encode auth: %v\n", err)
+			} else if encoded != "" {
+				extraEnv["VIBERUN_AUTH_BUNDLE"] = encoded
 			}
 		}
 	}
