@@ -46,7 +46,9 @@
 ## CLI Styling Guidelines
 - Use Charmbracelet `lipgloss` for CLI styling when output is a TTY; preserve plain text when `NO_COLOR` is set or `TERM=dumb`.
 - Keep styling minimal and legible in both light and dark themes; prefer `AdaptiveColor` and avoid heavy color blocks.
-- Use brand fuchsia sparingly for headers; use a distinct, subdued color for commands and links.
+- Maintain a consistent visual language across all CLI surfaces (help, URL output, prompts, errors) so users learn one theme.
+- Use brand fuchsia sparingly for headers; use a distinct, subdued color for section headers (e.g., “Commands”) and keep command text uncolored for readability.
+- Keep comments/descriptions muted; reserve stronger color for links, IPs, and status values.
 - Keep commands copy‑paste friendly; if adding descriptions, prefer inline `# comment` so pasted lines still work.
 
 ## Wipe Command (Safety)

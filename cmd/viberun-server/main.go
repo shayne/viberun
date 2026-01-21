@@ -1269,8 +1269,17 @@ func dockerRunArgs(name string, app string, port int, image string) []string {
 }
 
 func handleAppsCommand() error {
-	state, _, err := server.LoadState()
+	state, statePath, err := server.LoadState()
 	if err != nil {
+		return err
+	}
+	stateDirty := false
+	if synced, err := syncPortsFromContainers(&state); err != nil {
+		return fmt.Errorf("failed to sync port mappings: %w", err)
+	} else if synced {
+		stateDirty = true
+	}
+	if err := persistState(statePath, &state, &stateDirty); err != nil {
 		return err
 	}
 	names := make([]string, 0, len(state.Ports))

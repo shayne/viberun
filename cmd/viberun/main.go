@@ -20,7 +20,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
@@ -120,6 +119,9 @@ var devServerSync = struct {
 }{}
 
 func runCLI() error {
+	if shouldStartShell() {
+		return runShell()
+	}
 	args := ensureRunSubcommand(normalizeArgs(os.Args[1:]))
 	handlers := map[string]yargs.SubcommandHandler{
 		"run":       handleRunCommand,
@@ -541,6 +543,9 @@ func showConfig(cfg config.Config, path string) error {
 }
 
 func handleBootstrap(args []string) error {
+	if !isDevMode() && os.Getenv("VIBERUN_ALLOW_BOOTSTRAP") == "" {
+		return fmt.Errorf("bootstrap is only available in development mode; run `viberun` to bootstrap interactively")
+	}
 	result, err := yargs.ParseAndHandleHelp[struct{}, bootstrapFlags, bootstrapArgs](args, helpConfig)
 	if errors.Is(err, yargs.ErrShown) {
 		return nil
@@ -1311,25 +1316,21 @@ type commandLine struct {
 }
 
 func newURLStyler(out io.Writer) urlStyler {
-	if !wantPrettyOutput(out) {
+	theme := shellThemeForOutput(out)
+	if !theme.Enabled {
 		return urlStyler{}
 	}
-	fuchsia := lipgloss.AdaptiveColor{Light: "#B0005A", Dark: "#FF5CB0"}
-	command := lipgloss.AdaptiveColor{Light: "#005A9C", Dark: "#7AB8FF"}
-	link := lipgloss.AdaptiveColor{Light: "#0A66C2", Dark: "#7AB8FF"}
-	muted := lipgloss.AdaptiveColor{Light: "#6E6E6E", Dark: "#9CA3AF"}
-	value := lipgloss.AdaptiveColor{Light: "#121212", Dark: "#E7E7E7"}
 	return urlStyler{
 		enabled:       true,
-		labelStyle:    lipgloss.NewStyle().Foreground(muted),
-		valueStyle:    lipgloss.NewStyle().Foreground(value),
-		headerStyle:   lipgloss.NewStyle().Bold(true).Foreground(fuchsia),
-		commandStyle:  lipgloss.NewStyle().Foreground(command),
-		commentStyle:  lipgloss.NewStyle().Foreground(muted),
-		linkStyle:     lipgloss.NewStyle().Foreground(link).Underline(true),
+		labelStyle:    theme.Muted,
+		valueStyle:    theme.Value,
+		headerStyle:   theme.HelpHeader,
+		commandStyle:  lipgloss.NewStyle(),
+		commentStyle:  theme.Muted,
+		linkStyle:     theme.Link,
 		publicStyle:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#1F7A1F", Dark: "#7EE787"}),
 		privateStyle:  lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#9A6B00", Dark: "#F2C14E"}),
-		disabledStyle: lipgloss.NewStyle().Bold(true).Foreground(muted),
+		disabledStyle: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#6E6E6E", Dark: "#9CA3AF"}),
 		ipStyle:       lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#1F7A1F", Dark: "#7EE787"}),
 	}
 }
@@ -1418,6 +1419,9 @@ func wantPrettyOutput(out io.Writer) bool {
 	termValue := os.Getenv("TERM")
 	if termValue == "" || termValue == "dumb" {
 		return false
+	}
+	if ttyAware, ok := out.(interface{ IsTTY() bool }); ok {
+		return ttyAware.IsTTY()
 	}
 	file, ok := out.(*os.File)
 	if !ok {
@@ -1927,19 +1931,7 @@ func runInteractiveSSHProxy(resolved target.Resolved, sshArgs []string, outputTa
 	}()
 
 	_ = pty.InheritSize(os.Stdin, ptmx)
-	stopResize := make(chan struct{})
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGWINCH)
-	go func() {
-		for {
-			select {
-			case <-sigCh:
-				_ = pty.InheritSize(os.Stdin, ptmx)
-			case <-stopResize:
-				return
-			}
-		}
-	}()
+	stopResize := startResizeWatcher(ptmx, os.Stdin)
 
 	copyDone := make(chan struct{})
 	go func() {
@@ -1975,8 +1967,9 @@ func runInteractiveSSHProxy(resolved target.Resolved, sshArgs []string, outputTa
 	}()
 
 	err = cmd.Wait()
-	signal.Stop(sigCh)
-	close(stopResize)
+	if stopResize != nil {
+		stopResize()
+	}
 	<-copyDone
 	return err
 }
