@@ -1,0 +1,22 @@
+{
+  "name": "viberun",
+  "version": "0.0.0",
+  "license": "BSD-3-Clause",
+  "bin": {
+    "viberun": "bin/viberun.js"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=16"
+  },
+  "files": [
+    "bin",
+    "vendor",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shayne/viberun.git"
+  }
+}

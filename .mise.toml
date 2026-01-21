@@ -44,6 +44,42 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/viberun-server-linux-amd6
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o dist/viberun-server-linux-arm64 ./cmd/viberun-server
 """
 
+[tasks."release:build-vendor"]
+run = "tools/packaging/build-vendor.sh"
+
+[tasks."release:build-npm"]
+run = "tools/packaging/build-npm.sh"
+
+[tasks."release:build-pypi"]
+run = "tools/packaging/build-pypi.sh"
+
+[tasks."release:build-packages"]
+run = """
+: "${VERSION:?VERSION is required}"
+tools/packaging/build-vendor.sh
+tools/packaging/build-npm.sh
+tools/packaging/build-pypi.sh
+"""
+
+[tasks."release:publish-npm"]
+run = """
+npm publish dist/npm --access public
+"""
+
+[tasks."release:publish-pypi"]
+run = """
+: "${TWINE_PASSWORD:?TWINE_PASSWORD is required}"
+python3 -m pip install --user twine
+python3 -m twine upload dist/pypi/*
+"""
+
+[tasks."release:test-uvx"]
+run = """
+: "${VERSION:?VERSION is required}"
+mise run release:build-packages
+uvx --from dist/pypi/viberun-${VERSION#v}-py3-none-any.whl viberun --help
+"""
+
 [tasks."release:push-image"]
 run = """
 : "${IMAGE:?IMAGE is required (e.g., ghcr.io/OWNER/REPO/viberun:TAG)}"
