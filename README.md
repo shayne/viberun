@@ -4,7 +4,7 @@
 
 # viberun
 
-`viberun` is a CLI-first, agent-native app host. Run `viberun <app>` locally and get dropped into an agent session inside a persistent Ubuntu container on a remote host. App data is stored under `/home/viberun` and survives container restarts or image updates.
+`viberun` is an interactive shell for running agent apps. Run `viberun`, then `run <app>` to drop into an agent session inside a persistent Ubuntu container on a remote host. App data is stored under `/home/viberun` and survives container restarts or image updates.
 
 ## Quick start (end-to-end)
 
@@ -19,7 +19,7 @@ curl -fsSL https://viberun.sh | bash
 Verify:
 
 ```bash
-viberun --version
+viberun --help
 ```
 
 Optional overrides (advanced):
@@ -35,29 +35,38 @@ Or with env vars:
 curl -fsSL https://viberun.sh | VIBERUN_INSTALL_DIR=~/.local/bin VIBERUN_INSTALL_BIN=viberun bash
 ```
 
-### 2) Bootstrap a host (once per VM)
+### 2) Set up a host (once per VM)
 
 Use any SSH host alias (for example, `myhost` in `~/.ssh/config`):
 
 ```bash
-viberun bootstrap myhost
+viberun setup myhost
 ```
 
-Optional: set it as your default host (and agent) so you can omit `@host` later:
+Optional: in the shell, set a default host (and agent) so you can omit `@host` later:
 
 ```bash
-viberun config --host myhost --agent codex
+config set host myhost
+config set agent codex
 ```
 
 ### 3) Start your first app
 
+Open the shell:
+
 ```bash
-viberun hello-world
+viberun
+```
+
+Then run your app inside the shell:
+
+```bash
+run hello-world
 ```
 
 If this is the first run, the server will prompt to create the container. Press Enter to accept.
 
-Detach without stopping the agent: Ctrl-\\ . Reattach later with `viberun hello-world`.
+Detach without stopping the agent: Ctrl-\\ . Reattach later by running `viberun`, then `run hello-world`.
 Paste clipboard images into the session with Ctrl-V; `viberun` uploads the image and inserts a `/tmp/viberun-clip-*.png` path.
 
 ### 4) Hello-world prompt (paste inside the session)
@@ -75,28 +84,32 @@ http://localhost:8080
 ```
 
 Open it in your browser.
-If you've configured app URLs, `viberun <app> url` shows the HTTPS address.
+If you've configured app URLs, run `app <name>` then `url` in the shell to see the HTTPS address.
 
 ## Common commands
 
+CLI:
+
 ```bash
-viberun myapp
-viberun myapp@hostb
-viberun --forward-agent myapp
-viberun myapp shell
-viberun myapp snapshot
-viberun myapp snapshots
-viberun myapp restore latest
-viberun myapp url
-viberun myapp users
-viberun myapp --delete -y
-viberun myapp update
-viberun bootstrap [<host>]
-viberun proxy setup
-viberun users list
+viberun
+viberun setup [<host>]
 viberun wipe
-viberun config --host myhost --agent codex
-viberun version
+```
+
+Shell:
+
+```bash
+run myapp
+rm myapp
+apps
+app myapp
+shell myapp
+snapshot
+snapshots
+restore latest
+url
+users
+delete
 ```
 
 <details>
@@ -110,7 +123,7 @@ viberun version
   - [High-level flow](#high-level-flow)
   - [Core components](#core-components)
   - [Session lifecycle](#session-lifecycle)
-  - [Bootstrap pipeline](#bootstrap-pipeline)
+  - [Setup pipeline](#setup-pipeline)
   - [Networking and ports](#networking-and-ports)
   - [App URLs and proxy](#app-urls-and-proxy)
   - [Snapshots and restore](#snapshots-and-restore)
@@ -130,10 +143,10 @@ Git, SSH, and the GitHub CLI are installed in containers. viberun seeds `git con
 
 Choose one of these auth paths:
 
-- **SSH (agent forwarding)**: Run `viberun --forward-agent <app>`. For existing apps, run `viberun <app> update` once to recreate the container with the agent socket mounted. Then `ssh -T git@github.com` inside the container to verify access.
+- **SSH**: Make sure your SSH keys are available inside the container, then run `ssh -T git@github.com` to verify access.
 - **HTTPS (GitHub CLI)**: Run `gh auth login` and choose HTTPS, then `gh auth setup-git`. Verify with `gh auth status`.
 
-If you update your local Git identity later, restart the app container (or run `viberun <app> update`) to re-apply the new values on startup.
+If you update your local Git identity later, restart the app container (or run `app <name>`, then `update`) to re-apply the new values on startup.
 
 ## Development
 
@@ -182,12 +195,12 @@ bin/viberun-e2e-local
 bin/viberun-integration
 ```
 
-### Bootstrap in development
+### Setup in development
 
-When you run `viberun` via `go run` (or a dev build), bootstrap defaults to staging the local server binary and building the container image locally. This is equivalent to:
+When you run `viberun` via `go run` (or a dev build), setup defaults to staging the local server binary and building the container image locally. This is equivalent to:
 
 ```bash
-viberun bootstrap --local --local-image myhost
+viberun setup --local --local-image myhost
 ```
 
 Under the hood, it builds a `viberun:dev` image for the host architecture, streams it over `ssh` with `docker save | docker load`, and tags it as `viberun:latest` on the host.
@@ -196,7 +209,7 @@ If you want to explicitly pass a local server binary:
 
 ```bash
 mise exec -- go build -o /tmp/viberun-server ./cmd/viberun-server
-viberun bootstrap --local-path /tmp/viberun-server myhost
+viberun setup --local-path /tmp/viberun-server myhost
 ```
 
 For the full build/test/E2E flow, see `DEVELOPMENT.md`.
@@ -206,12 +219,13 @@ For the full build/test/E2E flow, see `DEVELOPMENT.md`.
 ### High-level flow
 
 ```
-viberun <app>
-  -> ssh <host>
-    -> viberun-server gateway (mux)
-      -> viberun-server <app>
-        -> docker container viberun-<app>
-          -> agent session (tmux)
+viberun (shell)
+  -> run <app>
+    -> ssh <host>
+      -> viberun-server gateway (mux)
+        -> viberun-server <app>
+          -> docker container viberun-<app>
+            -> agent session (tmux)
 
 container port 8080
   -> host port (assigned per app)
@@ -222,7 +236,7 @@ container port 8080
 
 ### Core components
 
-- Client: `viberun` CLI on your machine.
+- Client: `viberun` shell on your machine.
 - Server: `viberun-server gateway` executed on the host via SSH (no long-running daemon required).
 - Container: `viberun-<app>` Docker container built from the `viberun:latest` image.
 - Agent: runs inside the container in a tmux session (default provider: `codex`).
@@ -231,14 +245,14 @@ container port 8080
 
 ### Session lifecycle
 
-1. `viberun <app>` resolves the host (from `@host` or your default config) and starts the `viberun-server gateway` over SSH.
+1. In the shell, `run <app>` resolves the host (from `@host` or your default config) and starts the `viberun-server gateway` over SSH.
 2. The server creates the container if needed, or starts it if it already exists.
 3. The agent process is attached via `docker exec` inside a tmux session so it persists across disconnects.
 4. `viberun` sets up a local mux forward so you can open the app on `http://localhost:<port>`.
 
-### Bootstrap pipeline
+### Setup pipeline
 
-The bootstrap script (run on the host) does the following:
+The setup script (run on the host) does the following:
 
 - Verifies the host is Ubuntu.
 - Installs Docker (if missing) and enables it.
@@ -246,9 +260,9 @@ The bootstrap script (run on the host) does the following:
 - Pulls the `viberun` container image from GHCR (unless using local image mode).
 - Downloads and installs the `viberun-server` binary.
 
-If bootstrap is run from a TTY, it will offer to set up a public domain name (same as `viberun proxy setup`).
+If setup is run from a TTY, it will offer to set up a public domain name (same as `proxy setup` in the shell).
 
-Useful bootstrap overrides:
+Useful setup overrides:
 
 - `VIBERUN_SERVER_REPO`: GitHub repo for releases (default `shayne/viberun`).
 - `VIBERUN_SERVER_VERSION`: release tag or `latest`.
@@ -269,35 +283,35 @@ Useful bootstrap overrides:
 ### App URLs and proxy
 
 `viberun` can optionally expose apps via a host-side proxy (Caddy + `viberun-auth`).
-Set it up once per host:
+Set it up once per host from the shell:
 
 ```bash
-viberun proxy setup [<host>]
+proxy setup [<host>]
 ```
 
 You'll be prompted for a base domain and public IP (for DNS), plus a primary username/password.
 Create an A record (or wildcard) pointing to the host's public IP.
 
-After setup:
+After setup (in the shell):
 
-- `viberun <app> url` shows the current URL and access status.
-- `viberun <app> url --make-public` or `--require-login` toggles access (default requires login).
-- `viberun <app> url --set-domain <domain>` or `--reset-domain` manages custom domains.
-- `viberun <app> url --disable` or `--enable` turns the URL off/on.
-- `viberun <app> url --open` opens the URL in your browser.
-- `viberun users ...` manages login accounts; `viberun <app> users` controls who can access the app.
+- `app <name>` then `url` shows the current URL and access status.
+- `url public` or `url private` toggles access (default requires login).
+- `url set-domain <domain>` or `url reset-domain` manages custom domains.
+- `url disable` or `url enable` turns the URL off/on.
+- `url open` opens the URL in your browser.
+- `users list`/`users add`/`users remove`/`users set-password` manages login accounts; `users` (inside app context) controls who can access the app.
 
-If URL settings change, run `viberun <app> update` to refresh `VIBERUN_PUBLIC_URL` and `VIBERUN_PUBLIC_DOMAIN` inside the container.
+If URL settings change, run `update` inside the app context to refresh `VIBERUN_PUBLIC_URL` and `VIBERUN_PUBLIC_DOMAIN` inside the container.
 
 ### Snapshots and restore
 
 Snapshots are Btrfs subvolume snapshots of the app's `/home/viberun` volume (auto-incremented versions).
 On the host, each app uses a loop-backed Btrfs file under `/var/lib/viberun/apps/<app>/home.btrfs`.
 
-- `viberun <app> snapshot` creates the next `vN` snapshot.
-- `viberun <app> snapshots` lists versions with timestamps.
-- `viberun <app> restore <vN|latest>` restores from a snapshot (`latest` picks the highest `vN`).
-- `viberun <app> --delete -y` removes the container, the app volume + snapshots, and the host RPC directory.
+- `snapshot` creates the next `vN` snapshot (inside app context).
+- `snapshots` lists versions with timestamps (inside app context).
+- `restore <vN|latest>` restores from a snapshot (`latest` picks the highest `vN`) (inside app context).
+- `rm <app>` (global) or `delete` (inside app context) removes the container, the app volume + snapshots, and the host RPC directory.
 
 Restore details:
 - The host stops the container (if running) to safely unmount the volume.
@@ -331,10 +345,9 @@ Supported agent providers:
 - `ampcode` (alias: `amp`)
 - `opencode`
 
-Custom agents can be run via `npx:<pkg>` or `uvx:<pkg>` (for example, `viberun --agent npx:@sourcegraph/amp@latest <app>`).
+Custom agents can be run via `npx:<pkg>` or `uvx:<pkg>` (for example, `config set agent npx:@sourcegraph/amp@latest` in the shell).
 
-Set globally with `viberun config --agent <provider>` or per-run with `viberun --agent <provider> <app>`.
-To forward your local SSH agent into the container, use `viberun --forward-agent <app>`. For existing apps, run `viberun <app> update` once to recreate the container with the agent socket mounted.
+Set the default agent in the shell with `config set agent <provider>`.
 
 Base skills are shipped in `/opt/viberun/skills` and symlinked into each agent's skills directory. User skills can be added directly to the agent-specific skills directory under `/home/viberun`.
 
@@ -343,12 +356,12 @@ Base skills are shipped in `/opt/viberun/skills` and symlinked into each agent's
 - All control traffic goes over the mux over SSH; the server is invoked on demand and does not expose a network port.
 - The host RPC socket is local-only and protected by filesystem permissions and a per-session token.
 - Containers are isolated by Docker and only the app port is exposed.
-- App URLs are optional: the proxy requires login by default and can be made public per app with `viberun <app> url --make-public`.
+- App URLs are optional: the proxy requires login by default and can be made public per app by running `app <app>` then `url public` in the shell.
 
 ### Wipe (safety)
 
 `viberun wipe [<host>]` deletes local config and wipes all viberun data on the host.
-It requires a TTY and asks you to type `WIPE`.
+It requires a TTY and asks for a yes/no confirmation, then asks you to type `WIPE`.
 
 On the host, wipe removes:
 
@@ -372,9 +385,9 @@ Locally, it removes `~/.config/viberun/config.toml` (and legacy config if presen
 
 ### Troubleshooting
 
-- `unsupported OS: ... expected ubuntu`: bootstrap currently supports Ubuntu only.
-- `docker is required but was not found in PATH`: install Docker on the host or re-run bootstrap.
-- `missing btrfs on host`: rerun bootstrap to install `btrfs-progs` and ensure sudo access.
-- `no host provided and no default host configured`: run `viberun config --host myhost` or use `myapp@host`.
-- `container image architecture mismatch`: delete and recreate the app (`viberun <app> --delete -y`).
-- `proxy is not configured`: run `viberun proxy setup` (then retry `viberun <app> url`).
+- `unsupported OS: ... expected ubuntu`: setup currently supports Ubuntu only.
+- `docker is required but was not found in PATH`: install Docker on the host or re-run setup.
+- `missing btrfs on host`: rerun setup to install `btrfs-progs` and ensure sudo access.
+- `no host provided and no default host configured`: run `viberun`, then `config set host myhost` or use `run myapp@host`.
+- `container image architecture mismatch`: delete and recreate the app (`rm myapp` in the shell).
+- `proxy is not configured`: run `proxy setup` (then `app myapp`, `url`).

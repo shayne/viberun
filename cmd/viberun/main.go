@@ -118,15 +118,13 @@ func runCLI() error {
 	if shouldStartShell() {
 		return runShell()
 	}
-	args := ensureRunSubcommand(normalizeArgs(os.Args[1:]))
+	args := normalizeArgs(os.Args[1:])
+	if err := validateTopLevelArgs(args); err != nil {
+		return err
+	}
 	handlers := map[string]yargs.SubcommandHandler{
-		"run":       handleRunCommand,
-		"config":    handleConfigCommand,
-		"bootstrap": handleBootstrapCommand,
-		"proxy":     handleProxyCommand,
-		"users":     handleUsersCommand,
-		"wipe":      handleWipeCommand,
-		"version":   handleVersionCommand,
+		"setup": handleBootstrapCommand,
+		"wipe":  handleWipeCommand,
 	}
 	if err := yargs.RunSubcommands(context.Background(), args, helpConfig, struct{}{}, handlers); err != nil {
 		if errors.Is(err, yargs.ErrShown) {
@@ -171,7 +169,7 @@ type bootstrapFlags struct {
 }
 
 type bootstrapArgs struct {
-	Host string `pos:"0?" help:"host to bootstrap"`
+	Host string `pos:"0?" help:"host to set up"`
 }
 
 type proxyArgs struct {
@@ -191,66 +189,24 @@ type wipeArgs struct {
 var helpConfig = yargs.HelpConfig{
 	Command: yargs.CommandInfo{
 		Name:        "viberun",
-		Description: "CLI-first agent app host",
+		Description: "Interactive shell for running agent apps",
 		Examples: []string{
 			"viberun --help",
-			"viberun help run",
-			"viberun --version",
-			"viberun <app>",
-			"viberun <app> snapshot",
-			"viberun <app> restore latest",
-			"viberun <app> shell",
-			"viberun <app> url",
-			"viberun <app> users",
-			"viberun config --host myhost --agent codex",
-			"viberun bootstrap root@1.2.3.4",
-			"viberun proxy setup",
-			"viberun users list",
+			"viberun",
+			"viberun setup root@1.2.3.4",
 			"viberun wipe",
 		},
 	},
 	SubCommands: map[string]yargs.SubCommandInfo{
-		"run": {
-			Name:        "run",
-			Description: "Run or manage an app session",
-			Usage:       "<app> [snapshot|snapshots|restore <snapshot>|update|shell|url]",
-			Examples: []string{
-				"viberun <app>",
-				"viberun <app> snapshot",
-				"viberun <app> restore latest",
-				"viberun <app> shell",
-				"viberun <app> url",
-				"viberun <app> --delete -y",
-			},
-			Hidden: true,
-		},
-		"config": {
-			Name:        "config",
-			Description: "Show or update the local configuration",
-		},
-		"bootstrap": {
-			Name:        "bootstrap",
+		"setup": {
+			Name:        "setup",
 			Description: "Install or update the host-side server and image",
 			Usage:       "[<host>]",
-		},
-		"proxy": {
-			Name:        "proxy",
-			Description: "Configure app URLs via the host proxy",
-			Usage:       "setup [<host>]",
-		},
-		"users": {
-			Name:        "users",
-			Description: "Manage URL users",
-			Usage:       "list | add --username <u> | remove --username <u> | set-password --username <u>",
 		},
 		"wipe": {
 			Name:        "wipe",
 			Description: "Wipe local config and all viberun state on a host",
 			Usage:       "[<host>]",
-		},
-		"version": {
-			Name:        "version",
-			Description: "Show CLI version",
 		},
 	},
 }
@@ -258,9 +214,6 @@ var helpConfig = yargs.HelpConfig{
 func normalizeArgs(args []string) []string {
 	if len(args) == 0 {
 		return args
-	}
-	if args[0] == "--version" {
-		return append([]string{"version"}, args[1:]...)
 	}
 	if args[0] == "help" {
 		return rewriteHelpArgs(args[1:])
@@ -285,33 +238,16 @@ func rewriteHelpArgs(args []string) []string {
 	if isKnownCommand(args[0]) {
 		return []string{args[0], helpFlag}
 	}
-	return []string{"run", helpFlag}
+	return []string{helpFlag}
 }
 
 func isKnownCommand(value string) bool {
 	switch value {
-	case "run", "config", "bootstrap", "proxy", "users", "wipe", "version":
+	case "setup", "wipe":
 		return true
 	default:
 		return false
 	}
-}
-
-func ensureRunSubcommand(args []string) []string {
-	if len(args) == 0 {
-		return args
-	}
-	if isHelpFlag(args[0]) {
-		return args
-	}
-	cmd := firstNonFlag(args)
-	if cmd == "" {
-		return args
-	}
-	if isKnownCommand(cmd) {
-		return args
-	}
-	return append([]string{"run"}, args...)
 }
 
 func isHelpFlag(value string) bool {
@@ -349,9 +285,29 @@ func firstNonFlag(args []string) string {
 	return ""
 }
 
+func validateTopLevelArgs(args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(args[0]) == "--version" {
+		return newUsageError("version flag is not supported. Run `viberun --help` for available commands.")
+	}
+	if isHelpFlag(args[0]) {
+		return nil
+	}
+	cmd := firstNonFlag(args)
+	if cmd == "" {
+		return nil
+	}
+	if isKnownCommand(cmd) {
+		return nil
+	}
+	return newUsageError("unknown command. Run `viberun` for the shell, or use `viberun setup` / `viberun wipe`.")
+}
+
 func consumesValue(flag string) bool {
 	switch flag {
-	case "--agent", "--host", "--default-host", "--set-host", "--local-path":
+	case "--local-path":
 		return true
 	default:
 		return false
@@ -540,7 +496,7 @@ func showConfig(cfg config.Config, path string) error {
 
 func handleBootstrap(args []string) error {
 	if !isDevMode() && os.Getenv("VIBERUN_ALLOW_BOOTSTRAP") == "" {
-		return fmt.Errorf("bootstrap is only available in development mode; run `viberun` to bootstrap interactively")
+		return fmt.Errorf("setup is only available in development mode; run `viberun` to set up interactively")
 	}
 	result, err := yargs.ParseAndHandleHelp[struct{}, bootstrapFlags, bootstrapArgs](args, helpConfig)
 	if errors.Is(err, yargs.ErrShown) {
@@ -568,9 +524,9 @@ func handleBootstrap(args []string) error {
 
 	tty := term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 	if !tty {
-		fmt.Fprintln(os.Stderr, "bootstrap may require sudo; run from a terminal if you are prompted for a password")
+		fmt.Fprintln(os.Stderr, "setup may require sudo; run from a terminal if you are prompted for a password")
 	}
-	ui := tui.NewProgress(os.Stdout, tty, "bootstrap", resolved.Host)
+	ui := tui.NewProgress(os.Stdout, tty, "setup", resolved.Host)
 	ui.Start()
 	defer ui.Stop()
 
@@ -644,7 +600,7 @@ func handleBootstrap(args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	ui.Step("Run bootstrap")
+	ui.Step("Run setup")
 	ui.Suspend()
 	if err := cmd.Run(); err != nil {
 		ui.Resume()
@@ -659,8 +615,8 @@ func handleBootstrap(args []string) error {
 	if strings.TrimSpace(cfg.DefaultHost) == "" && strings.TrimSpace(hostArg) != "" {
 		cfg.DefaultHost = hostArg
 		if err := config.Save(path, cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "Bootstrap complete, but failed to save default host: %v\n", err)
-			fmt.Fprintf(os.Stderr, "Run `viberun config --host %s` to set it manually.\n", hostArg)
+			fmt.Fprintf(os.Stderr, "Setup complete, but failed to save default host: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Run `viberun`, then `config set host %s` to set it manually.\n", hostArg)
 		} else {
 			fmt.Fprintf(os.Stdout, "default host set to %s\n", hostArg)
 		}
@@ -676,7 +632,7 @@ func handleBootstrap(args []string) error {
 			}
 		}
 	}
-	fmt.Fprintln(os.Stdout, "Bootstrap complete.")
+	fmt.Fprintln(os.Stdout, "Setup complete.")
 	return nil
 }
 
@@ -873,7 +829,7 @@ func runProxySetupFlow(host string, gateway *gatewayClient, opts proxySetupOptio
 	if err != nil && !opts.forceSetup {
 		if !promptYesNoDefaultNo("Existing public domain settings could not be read. Continue with setup? [y/N]: ") {
 			if opts.showSkipHint {
-				fmt.Fprintln(os.Stdout, "Set up a public domain name later with: viberun proxy setup")
+				fmt.Fprintln(os.Stdout, "Set up a public domain name later with: proxy setup")
 			}
 			return nil
 		}
@@ -932,7 +888,7 @@ func runProxySetupFlow(host string, gateway *gatewayClient, opts proxySetupOptio
 	} else {
 		if !opts.forceSetup && !promptProxySetup() {
 			if opts.showSkipHint {
-				fmt.Fprintln(os.Stdout, "Set up a public domain name later with: viberun proxy setup")
+				fmt.Fprintln(os.Stdout, "Set up a public domain name later with: proxy setup")
 			}
 			return nil
 		}
@@ -1053,7 +1009,7 @@ func runRemoteProxySetup(gateway *gatewayClient, domain string, publicIP string,
 			strings.Contains(lower, "unknown flag: --username") ||
 			strings.Contains(lower, "unknown flag: --password-stdin") ||
 			strings.Contains(lower, "unknown flag: --proxy-image") {
-			return fmt.Errorf("remote viberun-server is out of date; re-run bootstrap to update it")
+			return fmt.Errorf("remote viberun-server is out of date; re-run setup to update it")
 		}
 		return err
 	}
@@ -1620,7 +1576,7 @@ func runUsersEditor(gateway *gatewayClient, app string, info proxyInfo) (bool, e
 		secondaryOptions = append(secondaryOptions, option)
 	}
 	if len(secondaryOptions) == 0 {
-		fmt.Fprintln(os.Stdout, "No secondary users configured. Add one with: viberun users add --username <u>")
+		fmt.Fprintln(os.Stdout, "No secondary users configured. Add one with: users add --username <u>")
 		return false, nil
 	}
 	title := "Users with access"
@@ -2003,7 +1959,7 @@ func exitUsage(message string) error {
 }
 
 func runUsageFull() string {
-	return "Usage: viberun [--agent provider] [--forward-agent|-A] <app> | viberun [--agent provider] [--forward-agent|-A] <app>@<host> | viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun [--agent provider] [--forward-agent|-A] <app> restore <snapshot> | viberun <app> shell | viberun <app> url [flags] | viberun <app> users | viberun <app> --delete [-y] | viberun bootstrap [<host>] | viberun proxy setup [<host>] | viberun users <list|add|remove|set-password> | viberun wipe [<host>] | viberun config [options]"
+	return "Usage: viberun [--agent provider] [--forward-agent|-A] <app> | viberun [--agent provider] [--forward-agent|-A] <app>@<host> | viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun [--agent provider] [--forward-agent|-A] <app> restore <snapshot> | viberun <app> shell | viberun <app> url [flags] | viberun <app> users | viberun <app> --delete [-y] | viberun setup [<host>] | viberun proxy setup [<host>] | viberun users <list|add|remove|set-password> | viberun wipe [<host>] | viberun config [options]"
 }
 
 func runUsageActions() string {
@@ -2020,14 +1976,15 @@ func runUsageDelete() string {
 
 func printMissingHostMessage() {
 	fmt.Fprintln(os.Stderr, "No host is configured yet, so viberun does not know where to run your app.")
-	fmt.Fprintln(os.Stderr, "Please run bootstrap against a host first:")
-	fmt.Fprintln(os.Stderr, "  viberun bootstrap <host>   (example: viberun bootstrap user@your-host)")
-	fmt.Fprintln(os.Stderr, "Then retry with:")
-	fmt.Fprintln(os.Stderr, "  viberun <app>")
+	fmt.Fprintln(os.Stderr, "Please run setup against a host first:")
+	fmt.Fprintln(os.Stderr, "  viberun setup <host>   (example: viberun setup user@your-host)")
+	fmt.Fprintln(os.Stderr, "Then open the shell and start your app:")
+	fmt.Fprintln(os.Stderr, "  viberun")
+	fmt.Fprintln(os.Stderr, "  run <app>")
 	fmt.Fprintln(os.Stderr, "Or run once with an explicit host:")
-	fmt.Fprintln(os.Stderr, "  viberun <app>@<host>")
+	fmt.Fprintln(os.Stderr, "  run <app>@<host>")
 	fmt.Fprintln(os.Stderr, "To set a default host for future runs:")
-	fmt.Fprintln(os.Stderr, "  viberun config --host <host>")
+	fmt.Fprintln(os.Stderr, "  config set host <host>")
 }
 
 func maybeClearDefaultAgentOnFailure(cfg config.Config, cfgPath string, flags runFlags, app string, stderrOutput string) {
@@ -2048,9 +2005,12 @@ func maybeClearDefaultAgentOnFailure(cfg config.Config, cfgPath string, flags ru
 	}
 	fmt.Fprintf(os.Stderr, "cleared default agent in %s so the next run prompts you to choose an agent\n", cfgPath)
 	if strings.TrimSpace(app) != "" {
-		fmt.Fprintf(os.Stderr, "test the agent locally: viberun %s shell, then run: %s %s --help\n", app, runner, pkg)
+		fmt.Fprintf(os.Stderr, "test the agent in the app container: shell %s, then run: %s %s --help\n", app, runner, pkg)
 	}
-	fmt.Fprintf(os.Stderr, "then retry with --agent %s:%s or set it as default with: viberun config --agent %s:%s\n", runner, pkg, runner, pkg)
+	fmt.Fprintf(os.Stderr, "set it again with: config set agent %s:%s\n", runner, pkg)
+	if strings.TrimSpace(app) != "" {
+		fmt.Fprintf(os.Stderr, "then retry with: run %s\n", app)
+	}
 }
 
 func versionString() string {
@@ -2221,12 +2181,12 @@ VIBERUN_SUDOERS_FILE="/etc/sudoers.d/viberun-server"
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then
   if ! need_cmd sudo; then
-    echo "sudo is required to bootstrap as a non-root user" >&2
+    echo "sudo is required to set up as a non-root user" >&2
     exit 1
   fi
   SUDO="sudo"
   if ! sudo -n true 2>/dev/null; then
-    echo "sudo password may be required during bootstrap" >&2
+    echo "sudo password may be required during setup" >&2
   fi
   if [ ! -f "$VIBERUN_SUDOERS_FILE" ]; then
     echo "viberun needs passwordless sudo and full environment access for viberun-server." >&2

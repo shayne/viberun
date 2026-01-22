@@ -29,8 +29,8 @@ If the user asks for a web app but does not mention running it as a service, ass
 9) After the service is confirmed healthy:
    - If `VIBERUN_PUBLIC_URL` is set, prefer that URL and open it. Mention it requires login by default unless they allow public access.
    - If no URL is set, ask if the user wants to allow public access:
-     - If yes, tell them to run `viberun <app> url --make-public` from their laptop.
-     - If no, say: “You can do this later from your laptop with `viberun <app> url --make-public`.”
+     - If yes, tell them to run `viberun`, then `app <app>` and `url public` from their laptop.
+     - If no, say: “You can do this later from your laptop with `viberun`, then `app <app>` and `url public`.”
 
 ## vrctl template
 ```
@@ -85,12 +85,12 @@ vrctl service add <app> \
 - If the user asks to save progress, run `vrctl host snapshot` and report the snapshot ref.
 - Before risky or destructive changes (removing services, deleting data, large refactors), ask the user if they want a snapshot.
   - If they say yes and host snapshots are available, run `vrctl host snapshot`.
-  - If host snapshots are unavailable, ask the user to run `viberun <app> snapshot` from their machine.
+  - If host snapshots are unavailable, ask the user to run `viberun`, then `app <app>` and `snapshot` from their machine.
 - If they say no, proceed without snapshot and note it briefly.
 - If the user asks to roll back, run `vrctl host snapshots` to list available tags, then `vrctl host restore <ref>`.
   - Accept either a tag or full ref; if given a tag, pass it as-is and let the host resolve it.
-  - Restore will disconnect the session; tell the user to re-run `viberun <app>` and then re-check service status / bring it back up.
-  - If restore is unavailable, ask the user to run `viberun <app> restore <ref>` from their machine.
+  - Restore will disconnect the session; tell the user to re-run `viberun`, then `run <app>` and re-check service status / bring it back up.
+  - If restore is unavailable, ask the user to run `viberun`, then `app <app>` and `restore <ref>` from their machine.
 
 ## Language/tooling preferences
 - Prefer typed Python (type annotations) and use uv exclusively for env/deps and running (`uv init`, `uv add`, `uv run`); avoid pip/venv directly.
@@ -105,7 +105,7 @@ vrctl service add <app> \
 ## User-facing notes
 - Treat the host port as the only user-facing port; do not mention 8080 unless the user explicitly asks.
 - Prefer the URL when `VIBERUN_PUBLIC_URL` is set; open it first.
-- If the URL is set, say it requires login by default and can be made public with `viberun <app> url --make-public`.
+- If the URL is set, say it requires login by default and can be made public by running `app <app>` then `url public` in the shell.
 - Always include the concrete local URL derived from `VIBERUN_HOST_PORT` as a fallback.
 - Use `printenv VIBERUN_HOST_PORT` (or `echo "$VIBERUN_HOST_PORT"`) to read it, then say:
   - `Open http://localhost:<port> in your laptop browser while this session is active.`

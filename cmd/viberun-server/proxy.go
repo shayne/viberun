@@ -668,7 +668,7 @@ func ensureCaddyContainer(name string, image string) error {
 		if err := runDockerCommandOutput("run", "-d", "--name", name, "--network", "host", "--restart", "unless-stopped", "-v", "/var/lib/viberun/caddy:/data", "-v", "/var/lib/viberun/caddy:/config", "-v", "/var/lib/viberun/proxy.toml:/var/lib/viberun/proxy.toml:ro", image); err != nil {
 			message := err.Error()
 			if strings.Contains(message, "pull access denied") || strings.Contains(message, "not found") || strings.Contains(message, "manifest unknown") {
-				return fmt.Errorf("proxy image %s not available; re-run bootstrap or pull it manually: %s", image, err)
+				return fmt.Errorf("proxy image %s not available; re-run setup or pull it manually: %s", image, err)
 			}
 			return fmt.Errorf("failed to start caddy container: %w", err)
 		}

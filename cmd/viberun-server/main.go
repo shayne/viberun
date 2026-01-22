@@ -177,7 +177,7 @@ func runServer() error {
 	}
 	if args[0] == "proxy" {
 		if os.Geteuid() != 0 {
-			return fmt.Errorf("viberun-server must run as root; run via sudo or re-run bootstrap")
+			return fmt.Errorf("viberun-server must run as root; run via sudo or re-run setup")
 		}
 		if err := handleProxyCommand(args[1:]); err != nil {
 			return err
@@ -190,7 +190,7 @@ func runServer() error {
 			return err
 		}
 		if os.Geteuid() != 0 {
-			return fmt.Errorf("viberun-server must run as root; run via sudo or re-run bootstrap")
+			return fmt.Errorf("viberun-server must run as root; run via sudo or re-run setup")
 		}
 		if _, err := exec.LookPath("docker"); err != nil {
 			return fmt.Errorf("docker is required but was not found in PATH")
@@ -254,7 +254,7 @@ func runServer() error {
 	agentArgs = tmuxSessionArgs(sessionName, agentLabel, agentArgs)
 
 	if os.Geteuid() != 0 {
-		return fmt.Errorf("viberun-server must run as root; run via sudo or re-run bootstrap")
+		return fmt.Errorf("viberun-server must run as root; run via sudo or re-run setup")
 	}
 	if _, err := exec.LookPath("docker"); err != nil {
 		return fmt.Errorf("docker is required but was not found in PATH")
@@ -371,7 +371,7 @@ func runServer() error {
 			ui.Step("Check image")
 			if _, err := exec.Command("docker", "image", "inspect", defaultImage).CombinedOutput(); err != nil {
 				ui.Fail("failed")
-				return fmt.Errorf("image %s not available; re-run bootstrap to stage it", defaultImage)
+				return fmt.Errorf("image %s not available; re-run setup to stage it", defaultImage)
 			}
 			ui.Done("")
 		} else {
@@ -839,7 +839,7 @@ func dockerExec(name string, agentArgs []string, extraEnv map[string]string) err
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "warning: failed to inspect agent forwarding mount: %v\n", err)
 			} else if !mounted {
-				fmt.Fprintln(os.Stderr, "SSH agent forwarding isn't available in this container. Run `viberun --forward-agent <app> update` to enable it.")
+				fmt.Fprintln(os.Stderr, "SSH agent forwarding isn't available in this container. Restart the app from the viberun shell with VIBERUN_FORWARD_AGENT=1 to enable it.")
 			} else {
 				env["SSH_AUTH_SOCK"] = socketPath
 				_ = runDockerCommandOutput("exec", name, "tmux", "set-environment", "-g", "SSH_AUTH_SOCK", socketPath)

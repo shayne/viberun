@@ -11,78 +11,40 @@ import (
 	"testing"
 )
 
-func TestEnsureRunSubcommandBootstrap(t *testing.T) {
-	args := []string{"bootstrap", "root@5.161.202.241"}
-	got := ensureRunSubcommand(args)
-	if !reflect.DeepEqual(got, args) {
-		t.Fatalf("expected %v, got %v", args, got)
+func TestValidateTopLevelArgsSetup(t *testing.T) {
+	args := []string{"setup", "root@5.161.202.241"}
+	if err := validateTopLevelArgs(args); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestEnsureRunSubcommandProxy(t *testing.T) {
-	args := []string{"proxy", "setup"}
-	got := ensureRunSubcommand(args)
-	if !reflect.DeepEqual(got, args) {
-		t.Fatalf("expected %v, got %v", args, got)
-	}
-}
-
-func TestEnsureRunSubcommandUsers(t *testing.T) {
-	args := []string{"users", "list"}
-	got := ensureRunSubcommand(args)
-	if !reflect.DeepEqual(got, args) {
-		t.Fatalf("expected %v, got %v", args, got)
-	}
-}
-
-func TestEnsureRunSubcommandWipe(t *testing.T) {
+func TestValidateTopLevelArgsWipe(t *testing.T) {
 	args := []string{"wipe", "-y"}
-	got := ensureRunSubcommand(args)
-	if !reflect.DeepEqual(got, args) {
-		t.Fatalf("expected %v, got %v", args, got)
+	if err := validateTopLevelArgs(args); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestEnsureRunSubcommandDefaultRun(t *testing.T) {
+func TestValidateTopLevelArgsBootstrapUnknown(t *testing.T) {
+	args := []string{"bootstrap", "root@5.161.202.241"}
+	err := validateTopLevelArgs(args)
+	if err == nil {
+		t.Fatalf("expected error for bootstrap")
+	}
+}
+
+func TestValidateTopLevelArgsUnknown(t *testing.T) {
 	args := []string{"myapp"}
-	want := []string{"run", "myapp"}
-	got := ensureRunSubcommand(args)
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected %v, got %v", want, got)
-	}
-}
-
-func TestEnsureRunSubcommandHelp(t *testing.T) {
-	args := []string{"help"}
-	want := []string{"--help"}
-	got := ensureRunSubcommand(normalizeArgs(args))
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected %v, got %v", want, got)
+	err := validateTopLevelArgs(args)
+	if err == nil {
+		t.Fatalf("expected error for unknown command")
 	}
 }
 
 func TestNormalizeArgsHelpSubcommand(t *testing.T) {
-	args := []string{"help", "config"}
-	want := []string{"config", "--help"}
+	args := []string{"help", "setup"}
+	want := []string{"setup", "--help"}
 	got := normalizeArgs(args)
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected %v, got %v", want, got)
-	}
-}
-
-func TestEnsureRunSubcommandWithAgentFlag(t *testing.T) {
-	args := []string{"--agent", "codex", "myapp"}
-	want := []string{"run", "--agent", "codex", "myapp"}
-	got := ensureRunSubcommand(args)
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected %v, got %v", want, got)
-	}
-}
-
-func TestEnsureRunSubcommandWithForwardAgentFlag(t *testing.T) {
-	args := []string{"-A", "myapp"}
-	want := []string{"run", "-A", "myapp"}
-	got := ensureRunSubcommand(args)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected %v, got %v", want, got)
 	}

@@ -25,6 +25,11 @@ require_cmd losetup
 require_cmd mount
 require_cmd umount
 
+run_shell() {
+  local input="$1"
+  printf '%b' "$input" | script -q -c "viberun" /dev/null
+}
+
 if command -v sudo >/dev/null 2>&1; then
   if ! sudo -n true 2>/dev/null; then
     echo "passwordless sudo is required for btrfs volume operations" >&2
@@ -68,14 +73,14 @@ fi
 
 docker build -t viberun:latest "$root_dir" >/dev/null
 
-viberun config --host localhost --agent "$agent" >/dev/null
+run_shell "config set host localhost\nconfig set agent $agent\nexit\n" >/dev/null
 
 if docker inspect "$container" >/dev/null 2>&1; then
   docker rm -f "$container" >/dev/null
 fi
 
 create_output=""
-if ! create_output="$(printf '\nexit\n' | timeout 45s viberun "$app_name" shell 2>&1)"; then
+if ! create_output="$(printf 'shell %s\n\nexit\nexit\n' "$app_name" | timeout 45s script -q -c "viberun" /dev/null 2>&1)"; then
   echo "initial app creation failed for $app_name" >&2
   echo "$create_output" >&2
   exit 1
@@ -103,7 +108,7 @@ wait_for_container() {
 wait_for_container
 
 agent_output=""
-if ! agent_output="$(VIBERUN_AGENT_CHECK="viberun-agent-check" script -q -c "viberun \"$app_name\"" /dev/null 2>&1)"; then
+if ! agent_output="$(VIBERUN_AGENT_CHECK="viberun-agent-check" printf 'run %s\nexit\n' "$app_name" | timeout 45s script -q -c "viberun" /dev/null 2>&1)"; then
   echo "agent session check failed for $app_name" >&2
   echo "$agent_output" >&2
   exit 1
@@ -153,11 +158,11 @@ fi
 
 docker exec "$container" sh -c "printf 'before' > /home/viberun/app/.viberun-snap-test"
 
-viberun "$app_name" snapshot >/dev/null
+run_shell "app $app_name\nsnapshot\nexit\nexit\n" >/dev/null
 
 docker exec "$container" sh -c "printf 'after' > /home/viberun/app/.viberun-snap-test"
 
-viberun "$app_name" restore latest >/dev/null
+run_shell "app $app_name\nrestore latest\nexit\nexit\n" >/dev/null
 
 wait_for_container
 
@@ -167,8 +172,8 @@ if [ "$restored_contents" != "before" ]; then
   exit 1
 fi
 
-printf '\nexit\n' | timeout 45s viberun "$app_name" shell >/dev/null
+printf 'shell %s\nexit\nexit\n' "$app_name" | timeout 45s script -q -c "viberun" /dev/null >/dev/null
 
-viberun "$app_name" --delete -y >/dev/null 2>&1 || true
+printf 'rm %s\ny\nexit\n' "$app_name" | timeout 45s script -q -c "viberun" /dev/null >/dev/null 2>&1 || true
 
 echo "E2E smoke test completed for $app_name"

@@ -51,6 +51,15 @@ func (c *sshConn) Write(p []byte) (int, error) { return c.w.Write(p) }
 func (c *sshConn) Close() error                { return c.c.Close() }
 
 func startGateway(host string, agentProvider string, extraEnv map[string]string, forwardAgent bool) (*gatewayClient, error) {
+	if !forwardAgent {
+		forwardAgent = forwardAgentEnabled()
+	}
+	if forwardAgent {
+		if extraEnv == nil {
+			extraEnv = map[string]string{}
+		}
+		extraEnv["VIBERUN_FORWARD_AGENT"] = "1"
+	}
 	remoteArgs := []string{"viberun-server", "gateway"}
 	if strings.TrimSpace(agentProvider) != "" {
 		remoteArgs = append(remoteArgs, "--agent", agentProvider)
@@ -267,6 +276,9 @@ func prependEnv(args []string, extraEnv map[string]string) []string {
 	if value := strings.TrimSpace(os.Getenv("VIBERUN_AGENT_CHECK")); value != "" {
 		env["VIBERUN_AGENT_CHECK"] = value
 	}
+	if forwardAgentEnabled() {
+		env["VIBERUN_FORWARD_AGENT"] = "1"
+	}
 	for key, value := range extraEnv {
 		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
 			continue
@@ -286,4 +298,14 @@ func prependEnv(args []string, extraEnv map[string]string) []string {
 		prefix = append(prefix, key+"="+env[key])
 	}
 	return append(prefix, args...)
+}
+
+func forwardAgentEnabled() bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv("VIBERUN_FORWARD_AGENT")))
+	switch value {
+	case "1", "true", "yes", "y":
+		return true
+	default:
+		return false
+	}
 }
