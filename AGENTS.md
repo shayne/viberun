@@ -5,6 +5,7 @@
 
 ## Conventions Log
 - 2026-01-20: Avoid `os.Exit` in the codebase; bubble errors up and let `main()` return.
+- 2026-01-22: Treat tool/package versions as time-sensitive; verify “latest” via mise/brew or search instead of memory (knowledge cutoff 2024).
 
 ## Project Structure & Module Organization
 - `cmd/`: Go entrypoints (`viberun`, `viberun-server`). Main CLI and host-side server logic live here.
@@ -42,6 +43,7 @@
 
 ## Agent & Skills Notes
 - Skills in `skills/` are baked into the container image. If you change skill behavior, rebuild the image and re‑bootstrap the host.
+- When choosing tool/package versions or responding to “latest,” do not assume from memory. The knowledge cutoff is 2024 and the current date is 2026—verify using `mise ls-remote <tool>`, `brew info <formula>`, or web search as appropriate, and prefer `--help` or current docs for API/flag details.
 
 ## CLI Styling Guidelines
 - Use Charmbracelet `lipgloss` for CLI styling when output is a TTY; preserve plain text when `NO_COLOR` is set or `TERM=dumb`.

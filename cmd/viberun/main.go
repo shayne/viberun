@@ -628,6 +628,10 @@ func handleBootstrap(args []string) error {
 		ui.Done("")
 		env = append(env, "VIBERUN_SKIP_IMAGE_PULL=1")
 	}
+	proxyImageTag := ""
+	if localImage && (isDevRun() || isDevVersion()) {
+		proxyImageTag = devProxyImageTag()
+	}
 
 	command := bootstrapCommand(bootstrapScript())
 	remoteArgs := []string{"bash", "-lc", shellQuote(command)}
@@ -665,7 +669,7 @@ func handleBootstrap(args []string) error {
 		}
 	}
 	if tty {
-		if err := runProxySetupFlow(resolved.Host, proxySetupOptions{updateArtifacts: true, showSkipHint: true}); err != nil {
+		if err := runProxySetupFlow(resolved.Host, proxySetupOptions{updateArtifacts: true, showSkipHint: true, proxyImage: proxyImageTag}); err != nil {
 			fmt.Fprintf(os.Stderr, "proxy setup failed: %v\n", err)
 		}
 	}
@@ -847,6 +851,7 @@ type proxySetupOptions struct {
 	updateArtifacts bool
 	forceSetup      bool
 	showSkipHint    bool
+	proxyImage      string
 }
 
 func runProxySetupFlow(host string, opts proxySetupOptions) error {
@@ -935,15 +940,17 @@ func runProxySetupFlow(host string, opts proxySetupOptions) error {
 		}
 	}
 
-	proxyImage := ""
+	proxyImage := strings.TrimSpace(opts.proxyImage)
 	if shouldRunSetup && opts.updateArtifacts && (isDevRun() || isDevVersion()) {
 		if err := ensureDevServerSynced(host); err != nil {
 			return err
 		}
-		if err := stageLocalProxyImage(host); err != nil {
-			return err
+		if proxyImage == "" {
+			if err := stageLocalProxyImage(host); err != nil {
+				return err
+			}
+			proxyImage = devProxyImageTag()
 		}
-		proxyImage = devProxyImageTag()
 	}
 
 	domainChanged := !configured || strings.TrimSpace(domain) != strings.TrimSpace(configSummary.BaseDomain)
@@ -2400,6 +2407,11 @@ fi
 if ! need_cmd mkfs.btrfs || ! need_cmd btrfs; then
   $SUDO apt-get update -y
   $SUDO apt-get install -y btrfs-progs
+fi
+
+if ! need_cmd setfacl; then
+  $SUDO apt-get update -y
+  $SUDO apt-get install -y acl
 fi
 
 if ! need_cmd docker; then

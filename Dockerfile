@@ -7,14 +7,22 @@ ENV HOME=/home/viberun
 ENV CODEX_HOME=/home/viberun/.codex
 ENV VIBERUN_SKILLS_HOME=/opt/viberun/skills
 ENV VIBERUN_APP_DIR=/home/viberun/app
+ENV HOMEBREW_PREFIX=/home/viberun/.linuxbrew
+ENV HOMEBREW_CELLAR=/home/viberun/.linuxbrew/Cellar
+ENV HOMEBREW_REPOSITORY=/home/viberun/.linuxbrew/Homebrew
+ENV HOMEBREW_NO_ANALYTICS=1
+ENV MISE_INSTALL_PATH=/home/viberun/.local/bin/mise
+ENV PATH=/home/viberun/.local/bin:/home/viberun/.linuxbrew/bin:/home/viberun/.linuxbrew/sbin:${PATH}
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 ENV LC_CTYPE=C.UTF-8
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
+    build-essential \
     ca-certificates \
     curl \
+    file \
     gnupg \
     git \
     iproute2 \
@@ -24,20 +32,30 @@ RUN apt-get update \
     ncurses-term \
     nano \
     openssh-client \
+    procps \
+    unzip \
     ripgrep \
     s6 \
     python3 \
     python3-venv \
     python-is-python3 \
-    sudo \
     tmux \
     tzdata \
     vim \
     wget \
+    xz-utils \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -d ${VIBERUN_HOME} -s /bin/bash ${VIBERUN_USER}
+
+RUN mkdir -p ${VIBERUN_HOME}/.local/bin \
+  && chown -R ${VIBERUN_USER}:${VIBERUN_USER} ${VIBERUN_HOME}/.local
+
+RUN rm -rf /home/linuxbrew/.linuxbrew \
+  && mkdir -p /home/linuxbrew ${VIBERUN_HOME}/.linuxbrew \
+  && ln -s ${VIBERUN_HOME}/.linuxbrew /home/linuxbrew/.linuxbrew \
+  && chown -R ${VIBERUN_USER}:${VIBERUN_USER} /home/linuxbrew ${VIBERUN_HOME}/.linuxbrew
 
 RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
   && apt-get install -y --no-install-recommends nodejs \
@@ -49,6 +67,17 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_UNMANAGED_INSTALL="/usr/
 RUN curl -fsSL https://starship.rs/install.sh | sh -s -- -y \
   && mkdir -p ${VIBERUN_HOME}/.config
 
+RUN curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh -o /tmp/brew-install.sh \
+  && su - ${VIBERUN_USER} -c "NONINTERACTIVE=1 /bin/bash /tmp/brew-install.sh" \
+  && rm -f /tmp/brew-install.sh
+
+# TODO: Consider pinning mise versions and controlling upgrades centrally.
+RUN su - ${VIBERUN_USER} -c "curl -fsSL https://mise.jdx.dev/install.sh | MISE_INSTALL_PATH=${VIBERUN_HOME}/.local/bin/mise sh"
+
+RUN mkdir -p /opt/viberun/bootstrap/linuxbrew /opt/viberun/bootstrap/mise \
+  && cp -R -P ${VIBERUN_HOME}/.linuxbrew/. /opt/viberun/bootstrap/linuxbrew/ \
+  && cp -P ${VIBERUN_HOME}/.local/bin/mise /opt/viberun/bootstrap/mise/
+
 RUN set -eux; \
   mkdir -p -m 755 /etc/apt/keyrings; \
   wget -nv -O /etc/apt/keyrings/githubcli-archive-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg; \
@@ -59,12 +88,6 @@ RUN set -eux; \
   apt-get install -y --no-install-recommends gh; \
   apt-get clean; \
   rm -rf /var/lib/apt/lists/*
-
-RUN printf '%s\n' \
-  'Defaults:viberun !authenticate' \
-  'viberun ALL=(root) NOPASSWD: /usr/bin/apt *, /usr/bin/apt-get *' \
-  > /etc/sudoers.d/viberun \
-  && chmod 0440 /etc/sudoers.d/viberun
 
 COPY internal/agents/agents.json /etc/viberun/agents.json
 COPY bin/viberun-agent-shims /usr/local/bin/viberun-agent-shims
@@ -111,6 +134,7 @@ RUN mkdir -p ${VIBERUN_SKILLS_HOME} /opt/viberun/templates
 COPY skills/ ${VIBERUN_SKILLS_HOME}/
 COPY config/starship.toml /opt/viberun/templates/starship.toml
 COPY config/AGENTS.app.md /opt/viberun/templates/AGENTS.app.md
+COPY config/mise.app.toml /opt/viberun/templates/mise.app.toml
 COPY config/codex-config.toml /opt/viberun/templates/codex-config.toml
 RUN mkdir -p ${VIBERUN_HOME}/.local/services ${VIBERUN_HOME}/.local/logs ${VIBERUN_APP_DIR} \
   && chown -R ${VIBERUN_USER}:${VIBERUN_USER} ${VIBERUN_HOME}

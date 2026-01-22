@@ -6,7 +6,7 @@ This AGENTS.md applies to the app working directory inside the container.
 - Persistent Ubuntu container for a single app.
 - Workdir: /home/viberun/app (put code here).
 - Home: /home/viberun (persisted boundary for code, data, and services).
-- Default user: viberun (use sudo only for apt/apt-get installs).
+- Default user: viberun (no sudo; system package installs are disabled).
 
 ## Services and ports
 - Use vrctl to add/start/stop/restart services. Do not use systemd or s6 directly.
@@ -16,9 +16,15 @@ This AGENTS.md applies to the app working directory inside the container.
 - vrctl uses exec-style commands: pass the executable via `--cmd` and each argument via `--arg` (no shell strings).
 
 ## Packages and tooling
-- Install OS packages with sudo apt or sudo apt-get.
+- Use mise first and Homebrew second for tools and packages. The mise config lives at `/home/viberun/app/.mise.toml`.
+- Homebrew installs under `/home/viberun/.linuxbrew` (inside the snapshot boundary).
 - Node 24 LTS and Python 3 are available (`python` points to Python 3).
 - Prefer Python + uv or TypeScript per the skills.
+
+## Version freshness
+- Knowledge cutoff is 2024 and the current date is 2026. Do not assume “latest” versions from memory.
+- When pinning or upgrading tools, verify versions with `mise ls-remote <tool>` and `brew info <formula>` (or `brew search`), and use those results before editing `.mise.toml`.
+- For API/flag details, prefer `--help` output or current docs instead of memory.
 
 ## Skills (invoke with $name)
 - $service-management: install deps and manage long-running services.

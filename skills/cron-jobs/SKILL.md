@@ -7,34 +7,47 @@ metadata:
 
 # cron-jobs
 
-Purpose: help schedule recurring jobs inside the container using cron.
+Purpose: help schedule recurring jobs inside the container using a user-space cron runner (no sudo).
+
+## Version freshness
+- Knowledge cutoff is 2024 and the current date is 2026. Do not assume “latest” versions from memory.
+- When installing/pinning tools, verify via `mise ls-remote <tool>` and/or `brew info <formula>` before choosing versions.
+- For API/flag details, prefer `--help` output or current docs instead of memory.
 
 ## Workflow
-1) Ensure cron is installed and running under vrctl.
-2) Choose either `/etc/cron.d/` (system-wide) or user crontab.
-3) Add the schedule with explicit PATH and shell.
-4) Verify execution via logs.
+1) Install a cron runner with Homebrew (preferred) or mise if already pinned in `/home/viberun/app/.mise.toml`.
+2) Put the schedule in a file under `/home/viberun/app` or `~/.config/cron`.
+3) Run the cron runner in the foreground under vrctl.
+4) Verify execution via logs under `~/.local/logs`.
 5) Mention that vrctl keeps cron running on container restarts.
 
-## Install + start cron
+## Install + start cron (supercronic preferred)
 ```
-apt-get update
-apt-get install -y cron
-vrctl service add cron --cmd cron --arg -f
-```
-
-## /etc/cron.d/ example
-```
+brew install supercronic
+cat > /home/viberun/app/cron.tab <<'EOF'
 SHELL=/bin/bash
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+PATH=/home/viberun/.local/bin:/home/viberun/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
 
-# m h dom mon dow user command
-*/5 * * * * root /usr/bin/env bash -lc 'cd /home/viberun/app && ./scripts/job.sh' >> /var/log/<app>-cron.log 2>&1
+# m h dom mon dow command
+*/5 * * * * cd /home/viberun/app && ./scripts/job.sh >> /home/viberun/.local/logs/cron.log 2>&1
+EOF
+
+vrctl service add cron --cmd supercronic --arg /home/viberun/app/cron.tab
 ```
+
+If a cron command depends on mise-managed tools, wrap it:
+```
+*/5 * * * * mise exec -C /home/viberun/app -- <cmd> >> /home/viberun/.local/logs/cron.log 2>&1
+```
+
+## If supercronic is unavailable
+- `brew install cronie`
+- Use `crond --help` to choose the foreground flag (`-n` or `-f`) and log flags.
+- Point `crond` at a cron directory under `~/.config/cron` and keep logs under `~/.local/logs/`.
 
 ## Verify
 - `vrctl service status cron`
-- `tail -n 200 /var/log/<app>-cron.log`
+- `tail -n 200 /home/viberun/.local/logs/cron.log`
 
 ## Language/tooling preferences
 - Prefer typed Python (type annotations) and use uv exclusively for env/deps and running (`uv init`, `uv add`, `uv run`); avoid pip/venv directly.

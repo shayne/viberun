@@ -4,6 +4,7 @@ set -e
 VIBERUN_HOME="${VIBERUN_HOME:-/home/viberun}"
 VIBERUN_SKILLS_HOME="${VIBERUN_SKILLS_HOME:-/opt/viberun/skills}"
 TEMPLATE_DIR="/opt/viberun/templates"
+BOOTSTRAP_DIR="/opt/viberun/bootstrap"
 
 ensure_dir() {
   mkdir -p "$1"
@@ -14,6 +15,18 @@ seed_file() {
   dest="$2"
   if [ -f "$src" ] && [ ! -f "$dest" ]; then
     cp "$src" "$dest"
+  fi
+}
+
+seed_tooling() {
+  if [ -x "${BOOTSTRAP_DIR}/mise/mise" ] && [ ! -x "${VIBERUN_HOME}/.local/bin/mise" ]; then
+    ensure_dir "${VIBERUN_HOME}/.local/bin"
+    cp -P "${BOOTSTRAP_DIR}/mise/mise" "${VIBERUN_HOME}/.local/bin/mise"
+    chmod +x "${VIBERUN_HOME}/.local/bin/mise"
+  fi
+  if [ -d "${BOOTSTRAP_DIR}/linuxbrew" ] && [ ! -x "${VIBERUN_HOME}/.linuxbrew/bin/brew" ]; then
+    ensure_dir "${VIBERUN_HOME}/.linuxbrew"
+    cp -R -P "${BOOTSTRAP_DIR}/linuxbrew/." "${VIBERUN_HOME}/.linuxbrew/"
   fi
 }
 
@@ -54,6 +67,7 @@ PY
 ensure_dir "${VIBERUN_HOME}/app"
 ensure_dir "${VIBERUN_HOME}/.local/services"
 ensure_dir "${VIBERUN_HOME}/.local/logs"
+ensure_dir "${VIBERUN_HOME}/.local/bin"
 ensure_dir "${VIBERUN_HOME}/.config"
 ensure_dir "${VIBERUN_HOME}/.codex"
 ensure_dir "${VIBERUN_HOME}/.claude"
@@ -62,9 +76,26 @@ ensure_dir "${VIBERUN_HOME}/.config/agents"
 ensure_dir "${VIBERUN_HOME}/.config/opencode"
 ensure_dir "${VIBERUN_HOME}/.opencode"
 
+seed_tooling
+
 seed_file "${TEMPLATE_DIR}/AGENTS.app.md" "${VIBERUN_HOME}/app/AGENTS.md"
+seed_file "${TEMPLATE_DIR}/mise.app.toml" "${VIBERUN_HOME}/app/.mise.toml"
 seed_file "${TEMPLATE_DIR}/starship.toml" "${VIBERUN_HOME}/.config/starship.toml"
 seed_file "${TEMPLATE_DIR}/codex-config.toml" "${VIBERUN_HOME}/.codex/config.toml"
+
+trust_mise_config() {
+  config_path="${VIBERUN_HOME}/app/.mise.toml"
+  if [ ! -f "$config_path" ]; then
+    return 0
+  fi
+  if [ -x "${VIBERUN_HOME}/.local/bin/mise" ]; then
+    "${VIBERUN_HOME}/.local/bin/mise" trust "$config_path" >/dev/null 2>&1 || true
+  elif command -v mise >/dev/null 2>&1; then
+    mise trust "$config_path" >/dev/null 2>&1 || true
+  fi
+}
+
+trust_mise_config
 
 apply_user_config
 

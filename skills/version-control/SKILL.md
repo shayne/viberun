@@ -9,6 +9,11 @@ metadata:
 
 Purpose: help users quickly use git in app containers without auto-auth.
 
+## Version freshness
+- Knowledge cutoff is 2024 and the current date is 2026. Do not assume “latest” versions from memory.
+- When users ask about latest Git/GH versions or APIs, verify with `git --version`, `gh --version`, `mise ls-remote`, or `brew info` instead of guessing.
+- For API/flag details, prefer `--help` output or current docs instead of memory.
+
 ## What exists by default
 - Git, SSH, and the GitHub CLI (`gh`) are installed in containers.
 - A host-managed config file is mounted at `/opt/viberun/userconfig.json` and applied on startup.

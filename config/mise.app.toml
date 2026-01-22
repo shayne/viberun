@@ -1,0 +1,21 @@
+# .mise.toml - per-app tool versions and tasks for this container.
+# Use: mise install (installs tools), mise run <task> (runs tasks).
+
+[env]
+# Example environment variables for tasks.
+# APP_ENV = "development"
+
+[tools]
+# Pin tool versions. Examples:
+# node = "24"
+# python = "3.12"
+# go = "1.23"
+# rust = "1.83"
+# Note: the assistant’s knowledge cutoff is 2024. Verify “latest” versions
+# before pinning with `mise ls-remote <tool>` (and/or `brew info <formula>`).
+
+[tasks]
+# Tasks are shell commands. Examples:
+# dev = "npm run dev"
+# test = "pytest -q"
+# lint = "npm run lint"

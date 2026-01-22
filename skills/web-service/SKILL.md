@@ -9,6 +9,11 @@ metadata:
 
 Purpose: help set up a web app inside the container with a stable vrctl-managed service and port 8080 mapping.
 
+## Version freshness
+- Knowledge cutoff is 2024 and the current date is 2026. Do not assume “latest” versions from memory.
+- When installing/pinning tools, verify via `mise ls-remote <tool>` and/or `brew info <formula>` before choosing versions.
+- For API/flag details, prefer `--help` output or current docs instead of memory.
+
 ## Default behavior
 If the user asks for a web app but does not mention running it as a service, assume they still want it running and set up a vrctl service.
 
@@ -18,9 +23,10 @@ If the user asks for a web app but does not mention running it as a service, ass
 3) Ensure the web server binds to `0.0.0.0` (not `127.0.0.1`) so host port mapping works.
 4) Prefer a dev server with reload/watch so edits show up without restarting the service.
 5) Register the service with `vrctl service add <app> --cmd <executable> --arg <arg> ... --cwd /home/viberun/app --env PORT=8080 --env HOST=0.0.0.0`.
-5) Wait briefly (1–2s), then verify with `vrctl service status <app>` and `vrctl service logs <app> -n 200`.
-6) Mention that vrctl keeps the service running on container restarts.
-7) After the service is confirmed healthy:
+6) If the executable comes from mise, wrap it with `mise exec -C /home/viberun/app -- <cmd>` or run a mise task and keep `--cwd /home/viberun/app`.
+7) Wait briefly (1–2s), then verify with `vrctl service status <app>` and `vrctl service logs <app> -n 200`.
+8) Mention that vrctl keeps the service running on container restarts.
+9) After the service is confirmed healthy:
    - If `VIBERUN_PUBLIC_URL` is set, prefer that URL and open it. Mention it requires login by default unless they allow public access.
    - If no URL is set, ask if the user wants to allow public access:
      - If yes, tell them to run `viberun <app> url --make-public` from their laptop.
@@ -30,6 +36,21 @@ If the user asks for a web app but does not mention running it as a service, ass
 ```
 vrctl service add <app> \
   --cmd <executable> \
+  --arg <arg> \
+  --cwd /home/viberun/app \
+  --env PORT=8080 \
+  --env HOST=0.0.0.0
+```
+
+## mise-managed executables
+If the server binary was installed with mise, wrap it so the service sees the right toolchain:
+```
+vrctl service add <app> \
+  --cmd mise \
+  --arg exec \
+  --arg -C --arg /home/viberun/app \
+  --arg -- \
+  --arg <executable> \
   --arg <arg> \
   --cwd /home/viberun/app \
   --env PORT=8080 \

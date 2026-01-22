@@ -71,6 +71,7 @@ func runShellSetup(state *shellState, action setupAction) (bool, string, error) 
 	localImage := false
 	updateArtifacts := true
 	skipBootstrap := false
+	proxyImageTag := ""
 	bootstrapped, _ := checkHostBootstrapped(resolved.Host)
 	if state.devMode {
 		if bootstrapped && tty {
@@ -129,6 +130,9 @@ func runShellSetup(state *shellState, action setupAction) (bool, string, error) 
 		ui.Resume()
 		ui.Done("")
 		env = append(env, "VIBERUN_SKIP_IMAGE_PULL=1")
+		if state.devMode {
+			proxyImageTag = devProxyImageTag()
+		}
 	}
 
 	command := bootstrapCommand(bootstrapScript())
@@ -178,7 +182,7 @@ func runShellSetup(state *shellState, action setupAction) (bool, string, error) 
 	}
 
 	if tty {
-		if err := runProxySetupFlow(resolved.Host, proxySetupOptions{updateArtifacts: updateArtifacts, showSkipHint: true}); err != nil {
+		if err := runProxySetupFlow(resolved.Host, proxySetupOptions{updateArtifacts: updateArtifacts, showSkipHint: true, proxyImage: proxyImageTag}); err != nil {
 			fmt.Fprintf(os.Stderr, "proxy setup failed: %v\n", err)
 		}
 	}

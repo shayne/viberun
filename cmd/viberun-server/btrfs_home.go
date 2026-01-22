@@ -7,6 +7,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +38,7 @@ type homeVolumeConfig struct {
 	MountDir     string
 	SnapshotsDir string
 	MetaPath     string
+	AclMarker    string
 }
 
 type homeVolumeMeta struct {
@@ -57,12 +59,16 @@ func homeVolumeConfigForApp(app string) homeVolumeConfig {
 		MountDir:     filepath.Join(baseDir, "mount"),
 		SnapshotsDir: filepath.Join(baseDir, "snapshots"),
 		MetaPath:     filepath.Join(baseDir, "meta.json"),
+		AclMarker:    filepath.Join(baseDir, "acl.applied"),
 	}
 }
 
 func ensureHomeVolume(app string, create bool) (homeVolumeConfig, bool, error) {
 	cfg := homeVolumeConfigForApp(app)
 	if err := ensureBtrfsTools(); err != nil {
+		return cfg, false, err
+	}
+	if err := ensureAclTools(); err != nil {
 		return cfg, false, err
 	}
 	uid, gid, err := containerUserIDs(defaultImage)
@@ -117,10 +123,16 @@ func ensureHomeVolume(app string, create bool) (homeVolumeConfig, bool, error) {
 	if err := ensureOwnedDir(filepath.Join(cfg.MountDir, "app"), uid, gid); err != nil {
 		return cfg, false, err
 	}
+	if err := ensureOwnedDir(filepath.Join(cfg.MountDir, ".local"), uid, gid); err != nil {
+		return cfg, false, err
+	}
 	if err := ensureOwnedDir(filepath.Join(cfg.MountDir, ".local", "services"), uid, gid); err != nil {
 		return cfg, false, err
 	}
 	if err := ensureOwnedDir(filepath.Join(cfg.MountDir, ".local", "logs"), uid, gid); err != nil {
+		return cfg, false, err
+	}
+	if err := ensureHomeACL(cfg, uid, gid); err != nil {
 		return cfg, false, err
 	}
 	if err := writeHomeVolumeMeta(cfg, loop); err != nil {
@@ -166,6 +178,16 @@ func ensureBtrfsTools() error {
 		if _, err := exec.LookPath(name); err != nil {
 			return fmt.Errorf("missing %s on host; rerun bootstrap to install btrfs-progs", name)
 		}
+	}
+	return nil
+}
+
+func ensureAclTools() error {
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("viberun-server must run as root; re-run with sudo")
+	}
+	if _, err := exec.LookPath("setfacl"); err != nil {
+		return fmt.Errorf("missing setfacl on host; rerun bootstrap to install acl")
 	}
 	return nil
 }
@@ -417,6 +439,99 @@ func containerUserID(image string, flag string) (int, error) {
 		return 0, fmt.Errorf("invalid id output %q for %s (%s)", value, image, flag)
 	}
 	return id, nil
+}
+
+func ensureHomeACL(cfg homeVolumeConfig, uid int, gid int) error {
+	if err := setAccessACL(cfg.MountDir, uid, gid); err != nil {
+		return err
+	}
+	if err := setDefaultACL(cfg.MountDir, uid, gid); err != nil {
+		return err
+	}
+	if cfg.AclMarker == "" {
+		return nil
+	}
+	if _, err := os.Stat(cfg.AclMarker); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := setAccessACLRecursive(cfg.MountDir, uid, gid); err != nil {
+		return err
+	}
+	if err := setDefaultACLRecursive(cfg.MountDir, uid, gid); err != nil {
+		return err
+	}
+	if err := os.WriteFile(cfg.AclMarker, []byte(time.Now().Format(time.RFC3339)), 0o644); err != nil {
+		return fmt.Errorf("failed to write acl marker: %w", err)
+	}
+	return nil
+}
+
+func aclSpec(uid int, gid int) string {
+	return fmt.Sprintf("u:%d:rwx,g:%d:rwx,m::rwx", uid, gid)
+}
+
+func setAccessACL(path string, uid int, gid int) error {
+	cmd := hostcmd.Run("setfacl", "-m", aclSpec(uid, gid), path)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to set ACL on %s: %s", path, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func setDefaultACL(path string, uid int, gid int) error {
+	cmd := hostcmd.Run("setfacl", "-d", "-m", aclSpec(uid, gid), path)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to set default ACL on %s: %s", path, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func setAccessACLRecursive(path string, uid int, gid int) error {
+	cmd := hostcmd.Run("setfacl", "-R", "-m", aclSpec(uid, gid), path)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to set recursive ACL on %s: %s", path, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func setDefaultACLRecursive(root string, uid int, gid int) error {
+	const batchSize = 128
+	spec := aclSpec(uid, gid)
+	batch := make([]string, 0, batchSize)
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		args := append([]string{"-d", "-m", spec}, batch...)
+		cmd := hostcmd.Run("setfacl", args...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to set default ACLs under %s: %s", root, strings.TrimSpace(string(out)))
+		}
+		batch = batch[:0]
+		return nil
+	}
+	if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		batch = append(batch, path)
+		if len(batch) >= batchSize {
+			return flush()
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return flush()
 }
 
 func snapshotPathForTag(cfg homeVolumeConfig, tag string) string {

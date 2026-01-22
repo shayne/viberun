@@ -9,6 +9,11 @@ metadata:
 
 Purpose: help run a long-lived background process under vrctl.
 
+## Version freshness
+- Knowledge cutoff is 2024 and the current date is 2026. Do not assume “latest” versions from memory.
+- When installing/pinning tools, verify via `mise ls-remote <tool>` and/or `brew info <formula>` before choosing versions.
+- For API/flag details, prefer `--help` output or current docs instead of memory.
+
 ## Workflow
 1) Define the command and working directory.
 2) Register the service with `vrctl service add`.
@@ -22,6 +27,19 @@ Purpose: help run a long-lived background process under vrctl.
 ```
 vrctl service add <name> \
   --cmd <executable> \
+  --arg <arg> \
+  --cwd /home/viberun/app
+```
+
+## mise-managed executables
+If the binary comes from mise, wrap it so the service has the right toolchain:
+```
+vrctl service add <name> \
+  --cmd mise \
+  --arg exec \
+  --arg -C --arg /home/viberun/app \
+  --arg -- \
+  --arg <executable> \
   --arg <arg> \
   --cwd /home/viberun/app
 ```
