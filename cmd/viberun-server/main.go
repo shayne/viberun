@@ -184,6 +184,25 @@ func runServer() error {
 		}
 		return nil
 	}
+	if args[0] == "gateway" {
+		result, err := yargs.ParseFlags[serverFlags](args[1:])
+		if err != nil {
+			return err
+		}
+		if os.Geteuid() != 0 {
+			return fmt.Errorf("viberun-server must run as root; run via sudo or re-run bootstrap")
+		}
+		if _, err := exec.LookPath("docker"); err != nil {
+			return fmt.Errorf("docker is required but was not found in PATH")
+		}
+		if err := ensureRootfulDocker(); err != nil {
+			return err
+		}
+		if err := updateUserConfigFromEnv(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to update user config: %v\n", err)
+		}
+		return runGateway(result.Flags.Agent)
+	}
 	if args[0] == "wipe" {
 		if err := handleWipeCommand(); err != nil {
 			return err
@@ -673,52 +692,108 @@ func parsePortMapping(output string) (int, bool) {
 }
 
 func syncPortsFromContainers(state *server.State) (bool, error) {
-	containers, err := listContainers()
+	containers, err := listContainersWithPorts()
 	if err != nil {
 		return false, err
 	}
 
 	updated := false
-	for _, name := range containers {
-		if !strings.HasPrefix(name, "viberun-") {
+	for _, info := range containers {
+		if !strings.HasPrefix(info.name, "viberun-") {
 			continue
 		}
-		app := strings.TrimPrefix(name, "viberun-")
+		app := strings.TrimPrefix(info.name, "viberun-")
 		if app == "" {
 			continue
 		}
 		if _, ok := state.PortForApp(app); ok {
 			continue
 		}
-		port, found, err := containerPort(name)
-		if err != nil {
+		if !info.found {
 			continue
 		}
-		if !found {
-			continue
-		}
-		state.SetPort(app, port)
+		state.SetPort(app, info.port)
 		updated = true
 	}
 
 	return updated, nil
 }
 
+type containerPortInfo struct {
+	name  string
+	port  int
+	found bool
+}
+
 func listContainers() ([]string, error) {
-	out, err := exec.Command("docker", "ps", "-a", "--format", "{{.Names}}").Output()
+	infos, err := listContainersWithPorts()
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(infos))
+	for _, info := range infos {
+		if strings.TrimSpace(info.name) == "" {
+			continue
+		}
+		names = append(names, info.name)
+	}
+	return names, nil
+}
+
+func listContainersWithPorts() ([]containerPortInfo, error) {
+	out, err := exec.Command("docker", "ps", "-a", "--format", "{{.Names}}\t{{.Ports}}").Output()
 	if err != nil {
 		return nil, err
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	var names []string
+	infos := make([]containerPortInfo, 0, len(lines))
 	for _, line := range lines {
-		name := strings.TrimSpace(line)
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		name := strings.TrimSpace(parts[0])
 		if name == "" {
 			continue
 		}
-		names = append(names, name)
+		ports := ""
+		if len(parts) > 1 {
+			ports = strings.TrimSpace(parts[1])
+		}
+		port, found := parseHostPortFromPorts(ports, 8080)
+		infos = append(infos, containerPortInfo{name: name, port: port, found: found})
 	}
-	return names, nil
+	return infos, nil
+}
+
+func parseHostPortFromPorts(ports string, containerPort int) (int, bool) {
+	if strings.TrimSpace(ports) == "" || containerPort <= 0 {
+		return 0, false
+	}
+	target := fmt.Sprintf("->%d/tcp", containerPort)
+	for _, part := range strings.Split(ports, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" || !strings.Contains(part, target) {
+			continue
+		}
+		idx := strings.LastIndex(part, target)
+		if idx <= 0 {
+			continue
+		}
+		left := strings.TrimSpace(part[:idx])
+		colon := strings.LastIndex(left, ":")
+		if colon < 0 || colon+1 >= len(left) {
+			continue
+		}
+		portText := strings.TrimSpace(left[colon+1:])
+		port, err := strconv.Atoi(portText)
+		if err != nil {
+			continue
+		}
+		return port, true
+	}
+	return 0, false
 }
 
 func dockerRun(name string, app string, port int) error {

@@ -182,10 +182,28 @@ func runShellSetup(state *shellState, action setupAction) (bool, string, error) 
 	}
 
 	if tty {
-		if err := runProxySetupFlow(resolved.Host, proxySetupOptions{updateArtifacts: updateArtifacts, showSkipHint: true, proxyImage: proxyImageTag}); err != nil {
+		gateway, err := startGateway(resolved.Host, "", nil, false)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "proxy setup failed: %v\n", err)
+		} else {
+			defer func() { _ = gateway.Close() }()
+			if err := runProxySetupFlow(resolved.Host, gateway, proxySetupOptions{updateArtifacts: updateArtifacts, showSkipHint: true, proxyImage: proxyImageTag}); err != nil {
+				fmt.Fprintf(os.Stderr, "proxy setup failed: %v\n", err)
+			}
 		}
 	}
+	closeShellGateway(state)
+	state.appsLoaded = false
+	state.appsSyncing = false
+	state.apps = nil
 	fmt.Fprintln(os.Stdout, "Setup complete.")
 	return true, "", nil
+}
+
+func checkHostBootstrapped(host string) (bool, error) {
+	output, err := runRemoteCommand(host, []string{"command", "-v", "viberun-server"})
+	if err != nil {
+		return false, nil
+	}
+	return strings.TrimSpace(output) != "", nil
 }

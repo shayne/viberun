@@ -208,14 +208,14 @@ For the full build/test/E2E flow, see `DEVELOPMENT.md`.
 ```
 viberun <app>
   -> ssh <host>
-    -> viberun-server <app>
-      -> docker container viberun-<app>
-        -> agent session (tmux)
+    -> viberun-server gateway (mux)
+      -> viberun-server <app>
+        -> docker container viberun-<app>
+          -> agent session (tmux)
 
 container port 8080
   -> host port (assigned per app)
-    -> ssh -L localhost:<port>
-      -> http://localhost:<port>
+    -> mux forward -> http://localhost:<port>
     -> (optional) host proxy (Caddy)
       -> https://<app>.<domain>
 ```
@@ -223,7 +223,7 @@ container port 8080
 ### Core components
 
 - Client: `viberun` CLI on your machine.
-- Server: `viberun-server` executed on the host via SSH (no long-running daemon required).
+- Server: `viberun-server gateway` executed on the host via SSH (no long-running daemon required).
 - Container: `viberun-<app>` Docker container built from the `viberun:latest` image.
 - Agent: runs inside the container in a tmux session (default provider: `codex`).
 - Host RPC: local Unix socket used by the container to request snapshot/restore operations.
@@ -231,10 +231,10 @@ container port 8080
 
 ### Session lifecycle
 
-1. `viberun <app>` resolves the host (from `@host` or your default config) and runs `viberun-server` over SSH.
+1. `viberun <app>` resolves the host (from `@host` or your default config) and starts the `viberun-server gateway` over SSH.
 2. The server creates the container if needed, or starts it if it already exists.
 3. The agent process is attached via `docker exec` inside a tmux session so it persists across disconnects.
-4. `viberun` sets up a local port forward so you can open the app on `http://localhost:<port>`.
+4. `viberun` sets up a local mux forward so you can open the app on `http://localhost:<port>`.
 
 ### Bootstrap pipeline
 
@@ -340,7 +340,7 @@ Base skills are shipped in `/opt/viberun/skills` and symlinked into each agent's
 
 ### Security model
 
-- All control traffic goes over SSH; the server is invoked on demand and does not expose a network port.
+- All control traffic goes over the mux over SSH; the server is invoked on demand and does not expose a network port.
 - The host RPC socket is local-only and protected by filesystem permissions and a per-session token.
 - Containers are isolated by Docker and only the app port is exposed.
 - App URLs are optional: the proxy requires login by default and can be made public per app with `viberun <app> url --make-public`.

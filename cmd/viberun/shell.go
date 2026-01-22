@@ -8,14 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"golang.org/x/term"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/shayne/viberun/internal/config"
-	"github.com/shayne/viberun/internal/target"
 )
 
 type shellScope int
@@ -34,39 +32,61 @@ const (
 	connFailed
 )
 
-type externalCommand struct {
-	args []string
-}
-
 type setupAction struct {
 	host string
 }
 
+type shellActionKind int
+
+const (
+	actionRun shellActionKind = iota
+	actionShell
+	actionDelete
+	actionProxySetup
+	actionUsersAdd
+	actionUsersRemove
+	actionUsersSetPassword
+	actionUsersEditor
+	actionWipe
+)
+
+type shellAction struct {
+	kind     shellActionKind
+	app      string
+	host     string
+	username string
+}
+
 type shellState struct {
-	output       []string
-	history      []string
-	historyIdx   int
-	scope        shellScope
-	app          string
-	prevApp      string
-	apps         []string
-	appsLoaded   bool
-	syncing      bool
-	pendingCmd   *pendingCommand
-	host         string
-	agent        string
-	cfg          config.Config
-	cfgPath      string
-	connState    connectionState
-	connError    string
-	bootstrapped bool
-	setupNeeded  bool
-	setupHinted  bool
-	hostPrompt   bool
-	setupAction  *setupAction
-	externalCmd  *externalCommand
-	quit         bool
-	devMode      bool
+	output            []string
+	history           []string
+	historyIdx        int
+	scope             shellScope
+	app               string
+	prevApp           string
+	apps              []string
+	appsLoaded        bool
+	appsSyncing       bool
+	appsRenderPending bool
+	preparedSession   *preparedSession
+	syncing           bool
+	pendingCmd        *pendingCommand
+	host              string
+	agent             string
+	cfg               config.Config
+	cfgPath           string
+	connState         connectionState
+	connError         string
+	bootstrapped      bool
+	setupNeeded       bool
+	setupHinted       bool
+	hostPrompt        bool
+	setupAction       *setupAction
+	shellAction       *shellAction
+	quit              bool
+	devMode           bool
+	gateway           *gatewayClient
+	gatewayHost       string
 }
 
 func runShell() error {
@@ -74,6 +94,9 @@ func runShell() error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		closeShellGateway(state)
+	}()
 	for {
 		model := newShellModel(state)
 		program := tea.NewProgram(model)
@@ -111,11 +134,21 @@ func runShell() error {
 			state.connState = connConnecting
 			continue
 		}
-		if state.externalCmd != nil {
-			if err := runExternalCommand(*state.externalCmd); err != nil {
+		if state.preparedSession != nil {
+			session := state.preparedSession
+			state.preparedSession = nil
+			if err := runPreparedInteractive(state, session); err != nil {
 				state.appendOutput(fmt.Sprintf("error: %v", err))
 			}
-			state.externalCmd = nil
+			state.connState = connConnecting
+			continue
+		}
+		if state.shellAction != nil {
+			action := *state.shellAction
+			state.shellAction = nil
+			if err := runShellAction(state, action); err != nil {
+				state.appendOutput(fmt.Sprintf("error: %v", err))
+			}
 			state.connState = connConnecting
 			continue
 		}
@@ -149,10 +182,6 @@ func newShellState() (*shellState, error) {
 	return state, nil
 }
 
-func (s *shellState) resolvedHost() (target.ResolvedHost, error) {
-	return target.ResolveHost(s.host, s.cfg)
-}
-
 func (s *shellState) appendOutput(text string) {
 	if text == "" {
 		s.output = append(s.output, "")
@@ -179,22 +208,6 @@ func shouldStartShell() bool {
 	stdinTTY := term.IsTerminal(int(os.Stdin.Fd()))
 	stdoutTTY := term.IsTerminal(int(os.Stdout.Fd()))
 	return stdinTTY && stdoutTTY
-}
-
-func runExternalCommand(cmd externalCommand) error {
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	if len(cmd.args) == 0 {
-		return errors.New("missing external command args")
-	}
-	command := exec.Command(exe, cmd.args...)
-	command.Stdout = os.Stdout
-	command.Stderr = os.Stderr
-	command.Stdin = os.Stdin
-	command.Env = os.Environ()
-	return command.Run()
 }
 
 func isDevMode() bool {

@@ -26,7 +26,12 @@ func runWipeFlow(host string, wipeLocal bool) (bool, error) {
 	if err := tui.PromptWipeConfirm(os.Stdin, os.Stdout); err != nil {
 		return false, err
 	}
-	if err := runRemoteWipe(host); err != nil {
+	gateway, err := startGateway(host, "", nil, false)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = gateway.Close() }()
+	if err := runRemoteWipe(gateway); err != nil {
 		return false, err
 	}
 	if wipeLocal {

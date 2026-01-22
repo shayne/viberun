@@ -11,10 +11,12 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/creack/pty"
+	"github.com/shayne/viberun/internal/mux"
+	"golang.org/x/term"
 )
 
-func startResizeWatcher(ptmx *os.File, input *os.File) func() {
+func startMuxResizeWatcher(stream *mux.Stream) func() {
+	sendCurrentSize(stream)
 	stop := make(chan struct{})
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGWINCH)
@@ -22,7 +24,7 @@ func startResizeWatcher(ptmx *os.File, input *os.File) func() {
 		for {
 			select {
 			case <-sigCh:
-				_ = pty.InheritSize(input, ptmx)
+				sendCurrentSize(stream)
 			case <-stop:
 				signal.Stop(sigCh)
 				close(sigCh)
@@ -33,4 +35,15 @@ func startResizeWatcher(ptmx *os.File, input *os.File) func() {
 	return func() {
 		close(stop)
 	}
+}
+
+func sendCurrentSize(stream *mux.Stream) {
+	if stream == nil {
+		return
+	}
+	cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || rows <= 0 || cols <= 0 {
+		return
+	}
+	sendResizeEvent(stream, rows, cols)
 }

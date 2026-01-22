@@ -222,16 +222,19 @@ func promptCopyAuth(app string, provider string, details []string) bool {
 	return true
 }
 
-func stageAuthBundle(host string, auth *localAuth) (*authbundle.Bundle, error) {
+func stageAuthBundle(gateway *gatewayClient, auth *localAuth) (*authbundle.Bundle, error) {
 	if auth == nil {
 		return nil, nil
+	}
+	if gateway == nil {
+		return nil, fmt.Errorf("gateway not available")
 	}
 	bundle := &authbundle.Bundle{
 		Provider: auth.Provider,
 		Env:      auth.Env,
 	}
 	for _, file := range auth.Files {
-		hostPath, err := uploadAuthFile(host, file.LocalPath)
+		hostPath, err := uploadAuthFile(gateway, file.LocalPath)
 		if err != nil {
 			return nil, err
 		}
@@ -244,13 +247,13 @@ func stageAuthBundle(host string, auth *localAuth) (*authbundle.Bundle, error) {
 	return bundle, nil
 }
 
-func uploadAuthFile(host string, localPath string) (string, error) {
+func uploadAuthFile(gateway *gatewayClient, localPath string) (string, error) {
 	token, err := randomToken()
 	if err != nil {
 		return "", err
 	}
 	remotePath := fmt.Sprintf("/tmp/viberun-auth-%s", token)
-	if err := uploadFileOverSSH(host, localPath, remotePath); err != nil {
+	if err := uploadFileOverGateway(gateway, localPath, remotePath); err != nil {
 		return "", err
 	}
 	return remotePath, nil

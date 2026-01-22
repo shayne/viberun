@@ -32,11 +32,27 @@ type hostSyncMsg struct {
 	reachable    bool
 	bootstrapped bool
 	apps         []string
+	gateway      *gatewayClient
+	gatewayHost  string
 	err          error
 }
 
-type externalCmdMsg struct {
-	cmd externalCommand
+type shellActionMsg struct {
+	action shellAction
+}
+
+type interactivePreparedMsg struct {
+	action   shellAction
+	session  *preparedSession
+	err      error
+	fallback bool
+}
+
+type appsLoadedMsg struct {
+	apps        []string
+	render      bool
+	err         error
+	fromAppsCmd bool
 }
 
 func newShellModel(state *shellState) shellModel {
@@ -164,6 +180,13 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case hostSyncMsg:
 		m.state.syncing = false
 		m.busy = false
+		if msg.gateway != nil {
+			closeShellGateway(m.state)
+			m.state.gateway = msg.gateway
+			m.state.gatewayHost = msg.gatewayHost
+		} else if msg.err != nil || !msg.bootstrapped {
+			closeShellGateway(m.state)
+		}
 		if msg.err != nil {
 			m.state.connState = connFailed
 			m.state.connError = msg.err.Error()
@@ -190,6 +213,7 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !msg.bootstrapped {
 			m.state.setupNeeded = true
 			m.state.appsLoaded = false
+			m.state.appsSyncing = false
 			m.state.apps = nil
 			m.state.pendingCmd = nil
 			if !m.state.setupHinted {
@@ -199,11 +223,10 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.state.setupNeeded = false
-		if msg.bootstrapped {
-			m.state.apps = msg.apps
-			m.state.appsLoaded = true
-		}
-		if m.state.pendingCmd != nil && msg.bootstrapped {
+		m.state.apps = msg.apps
+		m.state.appsLoaded = true
+		m.state.appsSyncing = false
+		if m.state.pendingCmd != nil {
 			pending := m.state.pendingCmd
 			m.state.pendingCmd = nil
 			result, cmd := dispatchCommandWithScope(m.state, pending)
@@ -216,10 +239,62 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-	case externalCmdMsg:
-		m.state.externalCmd = &msg.cmd
+	case shellActionMsg:
+		m.state.shellAction = &msg.action
 		m.busy = false
 		return m, tea.Quit
+	case interactivePreparedMsg:
+		m.busy = false
+		if msg.err != nil {
+			m.state.appendOutput(fmt.Sprintf("error: %v", msg.err))
+			return m, nil
+		}
+		if msg.fallback {
+			m.state.shellAction = &msg.action
+			return m, tea.Quit
+		}
+		if msg.session == nil {
+			m.state.appendOutput("error: failed to prepare session")
+			return m, nil
+		}
+		m.state.preparedSession = msg.session
+		return m, tea.Quit
+	case appsLoadedMsg:
+		m.state.appsSyncing = false
+		m.busy = false
+		if msg.err != nil {
+			if msg.fromAppsCmd && (m.state.syncing || !gatewayReady(m.state)) {
+				m.state.pendingCmd = &pendingCommand{cmd: parsedCommand{name: "apps"}, scope: scopeGlobal}
+				if !m.state.syncing {
+					return m, startHostSync(m.state)
+				}
+				return m, nil
+			}
+			if msg.fromAppsCmd || m.state.appsRenderPending {
+				m.state.appendOutput(fmt.Sprintf("error: %v", msg.err))
+			}
+			m.state.appsRenderPending = false
+			return m, nil
+		}
+		m.state.apps = msg.apps
+		m.state.appsLoaded = true
+		if msg.render || m.state.appsRenderPending {
+			m.state.appendOutput(renderAppsList(m.state))
+		}
+		m.state.appsRenderPending = false
+		if m.state.pendingCmd != nil {
+			pending := m.state.pendingCmd
+			m.state.pendingCmd = nil
+			result, cmd := dispatchCommandWithScope(m.state, pending)
+			if cmd != nil {
+				m.busy = true
+				return m, cmd
+			}
+			if result != "" {
+				m.state.appendOutput(result)
+			}
+		}
+		return m, nil
 	}
 
 	var cmd tea.Cmd

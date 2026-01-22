@@ -14,8 +14,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/pelletier/go-toml/v2"
 
+	"github.com/shayne/viberun/internal/agents"
 	"github.com/shayne/viberun/internal/config"
-	"github.com/shayne/viberun/internal/sshcmd"
 	"github.com/shayne/viberun/internal/target"
 )
 
@@ -95,8 +95,35 @@ func executeShellCommand(state *shellState, cmd parsedCommand, scope shellScope,
 		if state.setupNeeded {
 			return renderShellError("error: server not set up yet. Run `setup` to finish setup."), nil
 		}
-		if allowDefer && (state.syncing || !state.appsLoaded) {
-			state.pendingCmd = &pendingCommand{cmd: cmd, scope: scope}
+		needsGateway := requiresGatewayForCommand(cmd)
+		needsApps := requiresAppsListForCommand(cmd, scope)
+		if allowDefer && (state.syncing || (needsApps && !state.appsLoaded) || (needsGateway && !gatewayReady(state))) {
+			if msg, ok := localAppValidationError(state, cmd); ok {
+				return msg, nil
+			}
+			state.pendingCmd = &pendingCommand{cmd: cmd, scope: scopeGlobal}
+			if needsGateway && !gatewayReady(state) {
+				return "", startHostSync(state)
+			}
+			if needsApps && !state.appsLoaded {
+				if state.syncing {
+					return "", waitCmd()
+				}
+				if !gatewayReady(state) {
+					return "", startHostSync(state)
+				}
+				if !state.appsSyncing {
+					state.appsSyncing = true
+					return "", loadAppsCmd(state, false)
+				}
+				return "", waitCmd()
+			}
+			return "", startHostSync(state)
+		}
+	}
+	if cmd.name == "apps" || cmd.name == "ls" {
+		if state.syncing || !gatewayReady(state) {
+			state.pendingCmd = &pendingCommand{cmd: cmd, scope: scopeGlobal}
 			return "", startHostSync(state)
 		}
 	}
@@ -129,7 +156,14 @@ func handleCDCommand(state *shellState, cmd parsedCommand, scope shellScope, all
 			return renderShellError("error: server not set up yet. Run `setup` to finish setup."), nil
 		}
 		if allowDefer && !state.appsLoaded && !state.hostPrompt {
-			state.pendingCmd = &pendingCommand{cmd: cmd, scope: scope}
+			state.pendingCmd = &pendingCommand{cmd: cmd, scope: scopeGlobal}
+			if gatewayReady(state) {
+				if !state.appsSyncing {
+					state.appsSyncing = true
+					return "", loadAppsCmd(state, true)
+				}
+				return "", waitCmd()
+			}
 			return "", startHostSync(state)
 		}
 		if !appExists(state, target) {
@@ -159,6 +193,62 @@ func requiresHostSync(scope shellScope, cmd parsedCommand) bool {
 		return false
 	}
 	return spec.RequiresSync
+}
+
+func gatewayReady(state *shellState) bool {
+	if state.gateway == nil {
+		return false
+	}
+	if strings.TrimSpace(state.gatewayHost) == "" {
+		return false
+	}
+	resolved, err := target.ResolveHost(state.host, state.cfg)
+	if err != nil {
+		return false
+	}
+	return resolved.Host == state.gatewayHost
+}
+
+func requiresGatewayForCommand(cmd parsedCommand) bool {
+	switch cmd.name {
+	case "apps", "ls", "app":
+		return false
+	default:
+		return true
+	}
+}
+
+func requiresAppsListForCommand(cmd parsedCommand, scope shellScope) bool {
+	if scope == scopeAppConfig {
+		return false
+	}
+	switch cmd.name {
+	case "apps", "ls", "app", "cd":
+		return true
+	default:
+		return cmd.enforceExisting
+	}
+}
+
+func localAppValidationError(state *shellState, cmd parsedCommand) (string, bool) {
+	if !state.appsLoaded || len(cmd.args) == 0 {
+		return "", false
+	}
+	app := strings.TrimSpace(cmd.args[0])
+	if app == "" || appExists(state, app) {
+		return "", false
+	}
+	switch cmd.name {
+	case "app":
+		return renderShellError(fmt.Sprintf("error: app %q not found", app)), true
+	case "run":
+		if cmd.enforceExisting {
+			return renderShellError(fmt.Sprintf("error: app %q not found. Run `run %s` to create it.", app, app)), true
+		}
+	case "shell", "rm", "delete":
+		return renderShellError(fmt.Sprintf("error: app %q not found", app)), true
+	}
+	return "", false
 }
 
 func dispatchCommandWithScope(state *shellState, pending *pendingCommand) (string, tea.Cmd) {
@@ -212,6 +302,18 @@ func dispatchGlobalCommand(state *shellState, cmd parsedCommand) (string, tea.Cm
 	case "ls":
 		fallthrough
 	case "apps":
+		if !state.appsLoaded {
+			if state.appsSyncing {
+				state.appsRenderPending = true
+				return "", waitCmd()
+			}
+			if !gatewayReady(state) {
+				state.pendingCmd = &pendingCommand{cmd: cmd, scope: scopeGlobal}
+				return "", startHostSync(state)
+			}
+			state.appsSyncing = true
+			return "", loadAppsCmd(state, true)
+		}
 		return renderAppsList(state), nil
 	case "app":
 		if len(cmd.args) < 1 {
@@ -232,7 +334,7 @@ func dispatchGlobalCommand(state *shellState, cmd parsedCommand) (string, tea.Cm
 		if state.appsLoaded && !cmd.enforceExisting && !appExists(state, cmd.args[0]) {
 			state.apps = append(state.apps, cmd.args[0])
 		}
-		return "", externalCmd([]string{cmd.args[0]})
+		return "", prepareInteractiveCmd(state, shellAction{kind: actionRun, app: cmd.args[0]})
 	case "shell":
 		if len(cmd.args) < 1 {
 			return "error: shell requires an app name", nil
@@ -240,7 +342,7 @@ func dispatchGlobalCommand(state *shellState, cmd parsedCommand) (string, tea.Cm
 		if !appExists(state, cmd.args[0]) {
 			return renderShellError(fmt.Sprintf("error: app %q not found", cmd.args[0])), nil
 		}
-		return "", externalCmd([]string{cmd.args[0], "shell"})
+		return "", prepareInteractiveCmd(state, shellAction{kind: actionShell, app: cmd.args[0]})
 	case "rm", "delete":
 		if len(cmd.args) < 1 {
 			return "error: rm requires an app name", nil
@@ -248,20 +350,28 @@ func dispatchGlobalCommand(state *shellState, cmd parsedCommand) (string, tea.Cm
 		if !appExists(state, cmd.args[0]) {
 			return renderShellError(fmt.Sprintf("error: app %q not found", cmd.args[0])), nil
 		}
-		return "", externalCmd([]string{cmd.args[0], "--delete"})
+		return "", shellActionCmd(shellAction{kind: actionDelete, app: cmd.args[0]})
 	case "config":
 		return handleConfigShell(state, cmd.args)
 	case "setup":
 		return handleSetupShell(state, cmd.args)
 	case "proxy":
 		if len(cmd.args) > 0 && cmd.args[0] == "setup" {
-			return "", externalCmd(append([]string{"proxy"}, cmd.args...))
+			host := ""
+			if len(cmd.args) > 1 {
+				host = cmd.args[1]
+			}
+			return "", shellActionCmd(shellAction{kind: actionProxySetup, host: host})
 		}
 		return "error: usage: proxy setup [host]", nil
 	case "users":
 		return handleUsersShell(state, cmd.args)
 	case "wipe":
-		return "", externalCmd(append([]string{"wipe"}, cmd.args...))
+		host := ""
+		if len(cmd.args) > 0 {
+			host = cmd.args[0]
+		}
+		return "", shellActionCmd(shellAction{kind: actionWipe, host: host})
 	case "exit", "quit":
 		state.quit = true
 		return "", tea.Quit
@@ -284,9 +394,9 @@ func dispatchAppCommand(state *shellState, cmd parsedCommand) (string, tea.Cmd) 
 		setAppContext(state, "")
 		return "", nil
 	case "run":
-		return "", externalCmd([]string{state.app})
+		return "", prepareInteractiveCmd(state, shellAction{kind: actionRun, app: state.app})
 	case "shell":
-		return "", externalCmd([]string{state.app, "shell"})
+		return "", prepareInteractiveCmd(state, shellAction{kind: actionShell, app: state.app})
 	case "show":
 		return "", runAsync(func() (string, error) {
 			return renderAppSummary(state)
@@ -312,11 +422,11 @@ func dispatchAppCommand(state *shellState, cmd parsedCommand) (string, tea.Cmd) 
 			return runAppServerCommand(state, []string{"update"})
 		})
 	case "delete", "rm":
-		return "", externalCmd([]string{state.app, "--delete"})
+		return "", shellActionCmd(shellAction{kind: actionDelete, app: state.app})
 	case "url":
 		return handleURLShell(state, cmd.args)
 	case "users":
-		return "", externalCmd([]string{state.app, "users"})
+		return "", shellActionCmd(shellAction{kind: actionUsersEditor, app: state.app})
 	default:
 		return fmt.Sprintf("error: unknown command %q", cmd.name), nil
 	}
@@ -346,6 +456,7 @@ func handleConfigShell(state *shellState, args []string) (string, tea.Cmd) {
 		state.appsLoaded = false
 		state.apps = nil
 		state.pendingCmd = nil
+		closeShellGateway(state)
 		return fmt.Sprintf("default host set to %s", value), startHostSync(state)
 	case "agent":
 		value := strings.TrimSpace(strings.Join(args[2:], " "))
@@ -370,10 +481,30 @@ func handleUsersShell(state *shellState, args []string) (string, tea.Cmd) {
 	switch args[0] {
 	case "list":
 		return "", runAsync(func() (string, error) {
-			return listUsersOutput(state)
+			hostArg := ""
+			if len(args) > 1 {
+				hostArg = args[1]
+			}
+			return listUsersOutput(state, hostArg)
 		})
 	case "add", "remove", "set-password":
-		return "", externalCmd(append([]string{"users"}, args...))
+		username, hostArg, err := parseUsersArgs(args[1:])
+		if err != nil {
+			return fmt.Sprintf("error: %v", err), nil
+		}
+		if username == "" {
+			return "error: username is required", nil
+		}
+		switch args[0] {
+		case "remove":
+			return "", runAsync(func() (string, error) {
+				return runUsersRemoveShell(state, username, hostArg)
+			})
+		case "add":
+			return "", shellActionCmd(shellAction{kind: actionUsersAdd, username: username, host: hostArg})
+		default:
+			return "", shellActionCmd(shellAction{kind: actionUsersSetPassword, username: username, host: hostArg})
+		}
 	default:
 		return "error: usage: users list|add|remove|set-password [host]", nil
 	}
@@ -391,7 +522,9 @@ func handleURLShell(state *shellState, args []string) (string, tea.Cmd) {
 	cmd := args[0]
 	switch cmd {
 	case "open":
-		return "", externalCmd([]string{state.app, "url", "--open"})
+		return "", runAsync(func() (string, error) {
+			return runURLOpen(state)
+		})
 	case "public":
 		return "", runAsync(func() (string, error) {
 			return runURLAccessChange(state, "public")
@@ -471,12 +604,13 @@ func renderSetupIntro(state *shellState) string {
 	return renderInfoTable(header, headerStyle, labelStyle, descStyle, lines)
 }
 
-func listUsersOutput(state *shellState) (string, error) {
-	resolved, err := state.resolvedHost()
+func listUsersOutput(state *shellState, hostArg string) (string, error) {
+	gateway, cleanup, err := gatewayForCommand(state, hostArg)
 	if err != nil {
 		return "", err
 	}
-	output, err := runRemoteCommandWithInput(resolved.Host, sshcmd.WithSudo(resolved.Host, []string{"viberun-server", "proxy", "users", "list"}), nil)
+	defer cleanup()
+	output, err := gateway.command([]string{"proxy", "users", "list"}, "", nil)
 	if err != nil {
 		return "", err
 	}
@@ -685,17 +819,23 @@ func renderAppSummary(state *shellState) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if state.gateway == nil {
+		return "", errors.New("gateway not connected")
+	}
 	status := "unknown"
-	out, err := runRemoteCommandWithInput(resolved.Host, sshcmd.WithSudo(resolved.Host, []string{"viberun-server", resolved.App, "exists"}), nil)
+	agentProviderForChecks := strings.TrimSpace(state.agent)
+	if agentProviderForChecks == "" {
+		agentProviderForChecks = agents.DefaultProvider()
+	}
+	exists, err := remoteContainerExists(state.gateway, resolved.App, agentProviderForChecks)
 	if err == nil {
-		switch strings.TrimSpace(out) {
-		case "true":
+		if exists {
 			status = "running"
-		case "false":
+		} else {
 			status = "not running"
 		}
 	}
-	info, err := fetchProxyInfo(resolved)
+	info, err := fetchProxyInfo(state.gateway, resolved.App)
 	if err != nil {
 		info = proxyInfo{App: resolved.App}
 	}
@@ -716,7 +856,10 @@ func renderURLSummary(state *shellState) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	info, err := fetchProxyInfo(resolved)
+	if state.gateway == nil {
+		return "", errors.New("gateway not connected")
+	}
+	info, err := fetchProxyInfo(state.gateway, resolved.App)
 	if err != nil {
 		return "", err
 	}
@@ -730,10 +873,13 @@ func runURLAccessChange(state *shellState, access string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := runRemoteSetAccess(resolved.Host, resolved.App, access); err != nil {
+	if state.gateway == nil {
+		return "", errors.New("gateway not connected")
+	}
+	if err := runRemoteSetAccess(state.gateway, resolved.App, access); err != nil {
 		return "", err
 	}
-	info, err := fetchProxyInfo(resolved)
+	info, err := fetchProxyInfo(state.gateway, resolved.App)
 	if err != nil {
 		return "", err
 	}
@@ -747,10 +893,13 @@ func runURLDisabledChange(state *shellState, disabled bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := runRemoteSetDisabled(resolved.Host, resolved.App, disabled); err != nil {
+	if state.gateway == nil {
+		return "", errors.New("gateway not connected")
+	}
+	if err := runRemoteSetDisabled(state.gateway, resolved.App, disabled); err != nil {
 		return "", err
 	}
-	info, err := fetchProxyInfo(resolved)
+	info, err := fetchProxyInfo(state.gateway, resolved.App)
 	if err != nil {
 		return "", err
 	}
@@ -764,10 +913,13 @@ func runURLDomainChange(state *shellState, domain string, reset bool) (string, e
 	if err != nil {
 		return "", err
 	}
-	if err := runRemoteSetDomain(resolved.Host, resolved.App, domain, reset); err != nil {
+	if state.gateway == nil {
+		return "", errors.New("gateway not connected")
+	}
+	if err := runRemoteSetDomain(state.gateway, resolved.App, domain, reset); err != nil {
 		return "", err
 	}
-	info, err := fetchProxyInfo(resolved)
+	info, err := fetchProxyInfo(state.gateway, resolved.App)
 	if err != nil {
 		return "", err
 	}
@@ -781,9 +933,11 @@ func runAppServerCommand(state *shellState, args []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	remoteArgs := append([]string{"viberun-server", resolved.App}, args...)
-	remoteArgs = sshcmd.WithSudo(resolved.Host, remoteArgs)
-	output, err := runRemoteCommandWithInput(resolved.Host, remoteArgs, nil)
+	if state.gateway == nil {
+		return "", errors.New("gateway not connected")
+	}
+	remoteArgs := buildAppCommandArgs(strings.TrimSpace(state.agent), resolved.App, args)
+	output, err := state.gateway.command(remoteArgs, "", nil)
 	if err != nil {
 		return "", err
 	}
@@ -813,10 +967,112 @@ func runAsync(fn func() (string, error)) tea.Cmd {
 	}
 }
 
-func externalCmd(args []string) tea.Cmd {
+func shellActionCmd(action shellAction) tea.Cmd {
 	return func() tea.Msg {
-		return externalCmdMsg{cmd: externalCommand{args: args}}
+		return shellActionMsg{action: action}
 	}
+}
+
+func prepareInteractiveCmd(state *shellState, action shellAction) tea.Cmd {
+	return func() tea.Msg {
+		actionArg := ""
+		if action.kind == actionShell {
+			actionArg = "shell"
+		}
+		session, fallback, err := prepareInteractiveSession(state, action.app, actionArg)
+		if err != nil {
+			return interactivePreparedMsg{action: action, err: err}
+		}
+		if fallback || session == nil {
+			return interactivePreparedMsg{action: action, fallback: true}
+		}
+		return interactivePreparedMsg{action: action, session: session}
+	}
+}
+
+func waitCmd() tea.Cmd {
+	return func() tea.Msg {
+		return nil
+	}
+}
+
+func loadAppsCmd(state *shellState, render bool) tea.Cmd {
+	return func() tea.Msg {
+		if state == nil {
+			return appsLoadedMsg{err: errors.New("missing shell state"), render: render}
+		}
+		if state.syncing || !gatewayReady(state) {
+			return appsLoadedMsg{err: errors.New("gateway not connected"), render: render, fromAppsCmd: render}
+		}
+		gateway, cleanup, err := gatewayForCommand(state, "")
+		if err != nil {
+			return appsLoadedMsg{err: err, render: render, fromAppsCmd: render}
+		}
+		defer cleanup()
+		apps, err := runRemoteAppsList(gateway)
+		return appsLoadedMsg{apps: apps, err: err, render: render, fromAppsCmd: render}
+	}
+}
+
+func parseUsersArgs(args []string) (string, string, error) {
+	username := ""
+	host := ""
+	for i := 0; i < len(args); i++ {
+		part := strings.TrimSpace(args[i])
+		if part == "" {
+			continue
+		}
+		if part == "--username" {
+			if i+1 >= len(args) {
+				return "", "", errors.New("missing value for --username")
+			}
+			username = strings.TrimSpace(args[i+1])
+			i++
+			continue
+		}
+		if strings.HasPrefix(part, "--") {
+			return "", "", fmt.Errorf("unknown flag: %s", part)
+		}
+		if host == "" {
+			host = part
+			continue
+		}
+		return "", "", fmt.Errorf("unexpected argument: %s", part)
+	}
+	return username, host, nil
+}
+
+func runUsersRemoveShell(state *shellState, username string, hostArg string) (string, error) {
+	gateway, cleanup, err := gatewayForCommand(state, hostArg)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	if err := runRemoteUsersRemove(gateway, username); err != nil {
+		return "", err
+	}
+	return "OK", nil
+}
+
+func runURLOpen(state *shellState) (string, error) {
+	resolved, err := resolveAppTarget(state)
+	if err != nil {
+		return "", err
+	}
+	if state.gateway == nil {
+		return "", errors.New("gateway not connected")
+	}
+	info, err := fetchProxyInfo(state.gateway, resolved.App)
+	if err != nil {
+		return "", err
+	}
+	if info.Disabled || strings.TrimSpace(info.URL) == "" {
+		return "", fmt.Errorf("URL is not available")
+	}
+	if err := openURL(info.URL); err != nil {
+		return "", err
+	}
+	return "", nil
 }
 
 func parseShellCommand(line string) (parsedCommand, error) {
@@ -876,6 +1132,7 @@ func splitShellArgs(input string) ([]string, error) {
 func syncHostCmd(state *shellState) tea.Cmd {
 	host := state.host
 	cfg := state.cfg
+	agent := strings.TrimSpace(state.agent)
 	return func() tea.Msg {
 		if strings.TrimSpace(host) == "" {
 			return hostSyncMsg{reachable: false, bootstrapped: false, err: errors.New("no host configured")}
@@ -884,40 +1141,20 @@ func syncHostCmd(state *shellState) tea.Cmd {
 		if err != nil {
 			return hostSyncMsg{reachable: false, bootstrapped: false, err: err}
 		}
-		reachable, err := checkHostReachable(resolved.Host)
+		gateway, err := startGateway(resolved.Host, agent, nil, false)
 		if err != nil {
+			if isMissingServerError(err) {
+				return hostSyncMsg{reachable: true, bootstrapped: false, err: nil}
+			}
 			return hostSyncMsg{reachable: false, bootstrapped: false, err: err}
 		}
-		bootstrapped, err := checkHostBootstrapped(resolved.Host)
+		apps, err := runRemoteAppsList(gateway)
 		if err != nil {
-			return hostSyncMsg{reachable: true, bootstrapped: false, err: err}
+			_ = gateway.Close()
+			return hostSyncMsg{reachable: true, bootstrapped: true, err: err}
 		}
-		if !bootstrapped {
-			return hostSyncMsg{reachable: reachable, bootstrapped: false, err: nil}
-		}
-		apps, err := runRemoteAppsList(resolved.Host)
-		if err != nil {
-			return hostSyncMsg{reachable: reachable, bootstrapped: true, err: err}
-		}
-		return hostSyncMsg{reachable: reachable, bootstrapped: bootstrapped, apps: apps, err: nil}
+		return hostSyncMsg{reachable: true, bootstrapped: true, apps: apps, gateway: gateway, gatewayHost: resolved.Host, err: nil}
 	}
-}
-
-func checkHostReachable(host string) (bool, error) {
-	output, err := runRemoteCommand(host, []string{"true"})
-	if err != nil {
-		_ = output
-		return false, err
-	}
-	return true, nil
-}
-
-func checkHostBootstrapped(host string) (bool, error) {
-	output, err := runRemoteCommand(host, []string{"command", "-v", "viberun-server"})
-	if err != nil {
-		return false, nil
-	}
-	return strings.TrimSpace(output) != "", nil
 }
 
 func printShellURLSummary(out *ttyBuffer, info proxyInfo) {

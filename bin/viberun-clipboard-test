@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [ "${1-}" = "" ]; then
+  echo "usage: $0 <app> [host]" >&2
+  exit 1
+fi
+
+export VIBERUN_TEST_APP="$1"
+if [ "${2-}" != "" ]; then
+  export VIBERUN_TEST_HOST="$2"
+fi
+
+if ! command -v go >/dev/null 2>&1; then
+  echo "missing required command: go" >&2
+  exit 1
+fi
+
+go test -tags=integration "$root_dir/cmd/viberun" -run TestGatewayClipboardUpload -count=1
