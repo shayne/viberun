@@ -52,5 +52,5 @@
 - Keep commands copy‑paste friendly; if adding descriptions, prefer inline `# comment` so pasted lines still work.
 
 ## Wipe Command (Safety)
-- `viberun wipe [<host>]` deletes local config and wipes host state (containers, images, and viberun data/config/binaries). It uses a TUI confirmation that requires typing `WIPE`.
+- `viberun wipe [<host>]` deletes local config and wipes host state (containers, images, and viberun data/config/binaries). It uses a two-step TUI confirmation: a yes/no prompt, then typing `WIPE`.
 - Keep this description updated whenever wipe behavior changes (added/removed paths, images, container patterns, or confirmation flow).

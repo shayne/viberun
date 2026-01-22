@@ -35,8 +35,11 @@ const (
 )
 
 type externalCommand struct {
-	args        []string
-	description string
+	args []string
+}
+
+type setupAction struct {
+	host string
 }
 
 type shellState struct {
@@ -57,7 +60,10 @@ type shellState struct {
 	connState    connectionState
 	connError    string
 	bootstrapped bool
+	setupNeeded  bool
+	setupHinted  bool
 	hostPrompt   bool
+	setupAction  *setupAction
 	externalCmd  *externalCommand
 	quit         bool
 	devMode      bool
@@ -81,6 +87,29 @@ func runShell() error {
 		}
 		if state.quit {
 			return nil
+		}
+		if state.setupAction != nil {
+			action := *state.setupAction
+			state.setupAction = nil
+			ran, note, err := runShellSetup(state, action)
+			if err != nil {
+				var quietErr silentError
+				if !errors.As(err, &quietErr) {
+					state.appendOutput(fmt.Sprintf("setup failed: %v", err))
+				}
+			} else if ran {
+				state.setupNeeded = false
+				state.setupHinted = false
+				state.hostPrompt = false
+				state.bootstrapped = true
+				state.output = nil
+				state.appendOutput(renderFirstAppHint())
+			}
+			if note != "" {
+				state.appendOutput(note)
+			}
+			state.connState = connConnecting
+			continue
 		}
 		if state.externalCmd != nil {
 			if err := runExternalCommand(*state.externalCmd); err != nil {
@@ -115,6 +144,7 @@ func newShellState() (*shellState, error) {
 	state.agent = strings.TrimSpace(cfg.AgentProvider)
 	if state.host == "" {
 		state.hostPrompt = true
+		state.setupNeeded = true
 	}
 	return state, nil
 }

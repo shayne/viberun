@@ -16,7 +16,15 @@ import (
 )
 
 func PromptProxyDomain(in io.Reader, out io.Writer, prefix string) (string, error) {
-	value := ""
+	return promptProxyDomain(in, out, prefix, "")
+}
+
+func PromptProxyDomainWithDefault(in io.Reader, out io.Writer, prefix string, defaultDomain string) (string, error) {
+	return promptProxyDomain(in, out, prefix, defaultDomain)
+}
+
+func promptProxyDomain(in io.Reader, out io.Writer, prefix string, defaultDomain string) (string, error) {
+	value := strings.TrimSpace(defaultDomain)
 	prompt := strings.TrimSpace(prefix)
 	if prompt == "" {
 		prompt = "myapp."

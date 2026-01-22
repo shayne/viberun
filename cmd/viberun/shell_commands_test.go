@@ -82,6 +82,38 @@ func TestDispatchDefersRemoteCommandUntilSync(t *testing.T) {
 	}
 }
 
+func TestDispatchBlocksWhenHostMissing(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	state := &shellState{
+		scope:       scopeGlobal,
+		hostPrompt:  true,
+		setupNeeded: true,
+	}
+	result, cmd := dispatchShellCommand(state, "apps")
+	if cmd != nil {
+		t.Fatalf("expected no command for missing host")
+	}
+	if result != "error: no server connected yet. Run `setup` to get started." {
+		t.Fatalf("unexpected error output: %q", result)
+	}
+}
+
+func TestSetupCommandSetsPrompt(t *testing.T) {
+	state := &shellState{
+		scope: scopeGlobal,
+	}
+	result, cmd := dispatchShellCommand(state, "setup")
+	if cmd != nil {
+		t.Fatalf("expected no command for setup")
+	}
+	if state.setupAction == nil {
+		t.Fatalf("expected setup action to be queued")
+	}
+	if result == "" {
+		t.Fatalf("expected setup instructions output")
+	}
+}
+
 func TestDispatchRejectsUnknownApp(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	state := &shellState{

@@ -88,9 +88,17 @@ func executeShellCommand(state *shellState, cmd parsedCommand, scope shellScope,
 	if cmd.name == "cd" {
 		return handleCDCommand(state, cmd, scope, allowDefer)
 	}
-	if allowDefer && requiresHostSync(scope, cmd) && !state.hostPrompt && (state.syncing || !state.appsLoaded) {
-		state.pendingCmd = &pendingCommand{cmd: cmd, scope: scope}
-		return "", startHostSync(state)
+	if requiresHostSync(scope, cmd) {
+		if state.hostPrompt {
+			return renderShellError("error: no server connected yet. Run `setup` to get started."), nil
+		}
+		if state.setupNeeded {
+			return renderShellError("error: server not set up yet. Run `setup` to finish setup."), nil
+		}
+		if allowDefer && (state.syncing || !state.appsLoaded) {
+			state.pendingCmd = &pendingCommand{cmd: cmd, scope: scope}
+			return "", startHostSync(state)
+		}
 	}
 	if scope == scopeAppConfig {
 		return dispatchAppCommand(state, cmd)
@@ -114,6 +122,12 @@ func handleCDCommand(state *shellState, cmd parsedCommand, scope shellScope, all
 		setAppContext(state, state.prevApp)
 		return "", nil
 	default:
+		if state.hostPrompt {
+			return renderShellError("error: no server connected yet. Run `setup` to get started."), nil
+		}
+		if state.setupNeeded {
+			return renderShellError("error: server not set up yet. Run `setup` to finish setup."), nil
+		}
 		if allowDefer && !state.appsLoaded && !state.hostPrompt {
 			state.pendingCmd = &pendingCommand{cmd: cmd, scope: scope}
 			return "", startHostSync(state)
@@ -189,9 +203,12 @@ func dispatchGlobalCommand(state *shellState, cmd parsedCommand) (string, tea.Cm
 	switch cmd.name {
 	case "help", "?":
 		if len(cmd.args) > 0 {
+			if isHelpAll(cmd.args[0]) {
+				return renderGlobalHelp(true), nil
+			}
 			return renderCommandHelp(cmd.args[0], scopeGlobal), nil
 		}
-		return renderGlobalHelp(), nil
+		return renderGlobalHelp(false), nil
 	case "ls":
 		fallthrough
 	case "apps":
@@ -224,8 +241,18 @@ func dispatchGlobalCommand(state *shellState, cmd parsedCommand) (string, tea.Cm
 			return renderShellError(fmt.Sprintf("error: app %q not found", cmd.args[0])), nil
 		}
 		return "", externalCmd([]string{cmd.args[0], "shell"})
+	case "rm", "delete":
+		if len(cmd.args) < 1 {
+			return "error: rm requires an app name", nil
+		}
+		if !appExists(state, cmd.args[0]) {
+			return renderShellError(fmt.Sprintf("error: app %q not found", cmd.args[0])), nil
+		}
+		return "", externalCmd([]string{cmd.args[0], "--delete"})
 	case "config":
 		return handleConfigShell(state, cmd.args)
+	case "setup":
+		return handleSetupShell(state, cmd.args)
 	case "proxy":
 		if len(cmd.args) > 0 && cmd.args[0] == "setup" {
 			return "", externalCmd(append([]string{"proxy"}, cmd.args...))
@@ -233,6 +260,8 @@ func dispatchGlobalCommand(state *shellState, cmd parsedCommand) (string, tea.Cm
 		return "error: usage: proxy setup [host]", nil
 	case "users":
 		return handleUsersShell(state, cmd.args)
+	case "wipe":
+		return "", externalCmd(append([]string{"wipe"}, cmd.args...))
 	case "exit", "quit":
 		state.quit = true
 		return "", tea.Quit
@@ -245,6 +274,9 @@ func dispatchAppCommand(state *shellState, cmd parsedCommand) (string, tea.Cmd) 
 	switch cmd.name {
 	case "help", "?":
 		if len(cmd.args) > 0 {
+			if isHelpAll(cmd.args[0]) {
+				return renderAppHelp(), nil
+			}
 			return renderCommandHelp(cmd.args[0], scopeAppConfig), nil
 		}
 		return renderAppHelp(), nil
@@ -305,6 +337,8 @@ func handleConfigShell(state *shellState, args []string) (string, tea.Cmd) {
 		}
 		state.cfg.DefaultHost = value
 		state.host = value
+		state.hostPrompt = false
+		state.setupNeeded = false
 		if err := config.Save(state.cfgPath, state.cfg); err != nil {
 			return fmt.Sprintf("error: failed to save config: %v", err), nil
 		}
@@ -390,6 +424,53 @@ func handleURLShell(state *shellState, args []string) (string, tea.Cmd) {
 	}
 }
 
+func handleSetupShell(state *shellState, args []string) (string, tea.Cmd) {
+	if len(args) != 0 {
+		return "error: usage: setup", nil
+	}
+	if state.setupAction != nil {
+		return "Setup already in progress.", nil
+	}
+	state.pendingCmd = nil
+	state.setupNeeded = true
+	state.setupAction = &setupAction{}
+	return renderSetupIntro(state), nil
+}
+
+type infoLine struct {
+	label string
+	desc  string
+}
+
+func renderSetupIntro(state *shellState) string {
+	theme := shellTheme()
+	headerStyle := theme.HelpHeader
+	labelStyle := theme.Value
+	descStyle := theme.Muted
+	if !theme.Enabled {
+		headerStyle = lipgloss.NewStyle()
+		labelStyle = lipgloss.NewStyle()
+		descStyle = lipgloss.NewStyle()
+	}
+	example := "root@1.2.3.4"
+	if theme.Enabled {
+		example = theme.Value.Render(example)
+	}
+	lines := []infoLine{
+		{label: "Step 1", desc: "Choose a server (DigitalOcean, Hetzner, or a home server)."},
+		{label: "Step 2", desc: "Make sure you can log in (username + IP or hostname)."},
+		{label: "Step 3", desc: fmt.Sprintf("Example login: %s", example)},
+	}
+	header := "Setup: connect your server"
+	if theme.Enabled {
+		setupStyle := lipgloss.NewStyle().Bold(true)
+		restStyle := lipgloss.NewStyle()
+		header = fmt.Sprintf("%s %s", setupStyle.Render("Setup:"), restStyle.Render("connect your server"))
+		headerStyle = lipgloss.NewStyle()
+	}
+	return renderInfoTable(header, headerStyle, labelStyle, descStyle, lines)
+}
+
 func listUsersOutput(state *shellState) (string, error) {
 	resolved, err := state.resolvedHost()
 	if err != nil {
@@ -410,16 +491,31 @@ func renderConfig(cfg config.Config, path string) string {
 	return fmt.Sprintf("Config path: %s\n%s", path, string(data))
 }
 
-func renderGlobalHelp() string {
+func renderGlobalHelp(showAll bool) string {
 	theme := shellTheme()
 	styleCmd := lipgloss.NewStyle()
 	styleComment := theme.Muted
 	styleHeader := theme.HelpHeader
+	hintStyle := theme.Value
 	if !theme.Enabled {
 		styleComment = lipgloss.NewStyle()
 		styleHeader = lipgloss.NewStyle()
+		hintStyle = lipgloss.NewStyle()
 	}
-	return renderHelpTable("Commands:", styleHeader, commandLinesForScope(scopeGlobal), styleCmd, styleComment, theme.Muted, theme.Value)
+	if !showAll {
+		return renderHelpTable("Commands (use help --all for advanced):", styleHeader, commandLinesForScope(scopeGlobal, false), styleCmd, styleComment, theme.Muted, hintStyle)
+	}
+	base := commandLinesForScope(scopeGlobal, false)
+	advanced := advancedCommandLinesForScope(scopeGlobal)
+	rows := []string{""}
+	rows = append(rows, renderHelpSection("Commands:", styleHeader, base, styleCmd, styleComment, theme.Muted)...)
+	if len(advanced) > 0 {
+		rows = append(rows, "")
+		rows = append(rows, renderHelpSection("Advanced:", styleHeader, advanced, styleCmd, styleComment, theme.Muted)...)
+	}
+	rows = append(rows, "")
+	rows = append(rows, "Run "+hintStyle.Render("`help <command>`")+" for more details.")
+	return strings.Join(rows, "\n")
 }
 
 func renderAppHelp() string {
@@ -431,13 +527,31 @@ func renderAppHelp() string {
 		styleComment = lipgloss.NewStyle()
 		styleHeader = lipgloss.NewStyle()
 	}
-	return renderHelpTable("Commands:", styleHeader, commandLinesForScope(scopeAppConfig), styleCmd, styleComment, theme.Muted, theme.Value)
+	return renderHelpTable("Commands:", styleHeader, commandLinesForScope(scopeAppConfig, false), styleCmd, styleComment, theme.Muted, theme.Value)
 }
 
-func commandLinesForScope(scope shellScope) []helpLine {
+func commandLinesForScope(scope shellScope, includeAdvanced bool) []helpLine {
 	specs := commandSpecsForScope(scope)
 	lines := make([]helpLine, 0, len(specs))
 	for _, spec := range specs {
+		if spec.Advanced && !includeAdvanced {
+			continue
+		}
+		lines = append(lines, helpLine{cmd: spec.Display, desc: spec.Summary})
+		for _, child := range spec.Children {
+			lines = append(lines, helpLine{cmd: child.Cmd, desc: child.Desc, indent: true})
+		}
+	}
+	return lines
+}
+
+func advancedCommandLinesForScope(scope shellScope) []helpLine {
+	specs := commandSpecsForScope(scope)
+	lines := make([]helpLine, 0, len(specs))
+	for _, spec := range specs {
+		if !spec.Advanced {
+			continue
+		}
 		lines = append(lines, helpLine{cmd: spec.Display, desc: spec.Summary})
 		for _, child := range spec.Children {
 			lines = append(lines, helpLine{cmd: child.Cmd, desc: child.Desc, indent: true})
@@ -447,6 +561,14 @@ func commandLinesForScope(scope shellScope) []helpLine {
 }
 
 func renderHelpTable(header string, headerStyle lipgloss.Style, lines []helpLine, cmdStyle lipgloss.Style, commentStyle lipgloss.Style, subStyle lipgloss.Style, hintStyle lipgloss.Style) string {
+	rows := []string{""}
+	rows = append(rows, renderHelpSection(header, headerStyle, lines, cmdStyle, commentStyle, subStyle)...)
+	rows = append(rows, "")
+	rows = append(rows, "Run "+hintStyle.Render("`help <command>`")+" for more details.")
+	return strings.Join(rows, "\n")
+}
+
+func renderHelpSection(header string, headerStyle lipgloss.Style, lines []helpLine, cmdStyle lipgloss.Style, commentStyle lipgloss.Style, subStyle lipgloss.Style) []string {
 	indentPrefix := "  "
 	maxWidth := 0
 	for _, line := range lines {
@@ -458,8 +580,7 @@ func renderHelpTable(header string, headerStyle lipgloss.Style, lines []helpLine
 			maxWidth = width
 		}
 	}
-	rows := make([]string, 0, len(lines)+2)
-	rows = append(rows, "")
+	rows := make([]string, 0, len(lines)+1)
 	rows = append(rows, headerStyle.Render(header))
 	for _, line := range lines {
 		width := len(line.cmd)
@@ -479,9 +600,40 @@ func renderHelpTable(header string, headerStyle lipgloss.Style, lines []helpLine
 		}
 		rows = append(rows, fmt.Sprintf("%s%s  %s", prefix, cmdStyle.Render(cmd), commentStyle.Render("# "+line.desc)))
 	}
+	return rows
+}
+
+func renderInfoTable(header string, headerStyle lipgloss.Style, labelStyle lipgloss.Style, descStyle lipgloss.Style, lines []infoLine) string {
+	maxWidth := 0
+	for _, line := range lines {
+		width := len(line.label)
+		if width > maxWidth {
+			maxWidth = width
+		}
+	}
+	rows := make([]string, 0, len(lines)+2)
 	rows = append(rows, "")
-	rows = append(rows, "Run "+hintStyle.Render("`help <command>`")+" for more details.")
+	rows = append(rows, headerStyle.Render(header))
+	for _, line := range lines {
+		padding := maxWidth - len(line.label)
+		if padding < 0 {
+			padding = 0
+		}
+		label := line.label + strings.Repeat(" ", padding)
+		desc := "# " + line.desc
+		rows = append(rows, fmt.Sprintf("  %s  %s", labelStyle.Render(label), descStyle.Render(desc)))
+	}
+	rows = append(rows, "")
 	return strings.Join(rows, "\n")
+}
+
+func isHelpAll(arg string) bool {
+	switch strings.TrimSpace(strings.ToLower(arg)) {
+	case "--all", "-a", "all":
+		return true
+	default:
+		return false
+	}
 }
 
 func renderCommandHelp(name string, scope shellScope) string {
@@ -748,39 +900,6 @@ func syncHostCmd(state *shellState) tea.Cmd {
 			return hostSyncMsg{reachable: reachable, bootstrapped: true, err: err}
 		}
 		return hostSyncMsg{reachable: reachable, bootstrapped: bootstrapped, apps: apps, err: nil}
-	}
-}
-
-func handleHostPromptCmd(state *shellState, host string) tea.Cmd {
-	cfgPath := state.cfgPath
-	cfg := state.cfg
-	return func() tea.Msg {
-		host = strings.TrimSpace(host)
-		if host == "" {
-			return hostPromptMsg{err: errors.New("host is required")}
-		}
-		cfg.DefaultHost = host
-		if err := config.Save(cfgPath, cfg); err != nil {
-			return hostPromptMsg{err: err}
-		}
-		return hostPromptMsg{host: host}
-	}
-}
-
-func shouldBootstrap(state *shellState, bootstrapped bool) bool {
-	if state.hostPrompt {
-		return false
-	}
-	return !bootstrapped
-}
-
-func triggerBootstrapCmd(state *shellState) tea.Cmd {
-	return func() tea.Msg {
-		args := []string{"bootstrap", state.host}
-		if state.devMode {
-			args = []string{"bootstrap", "--local", "--local-image", state.host}
-		}
-		return externalCmdMsg{cmd: externalCommand{args: args, description: "bootstrap"}}
 	}
 }
 

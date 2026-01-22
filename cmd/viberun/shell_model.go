@@ -15,13 +15,12 @@ import (
 )
 
 type shellModel struct {
-	state        *shellState
-	input        textinput.Model
-	promptSpin   spinner.Model
-	width        int
-	height       int
-	busy         bool
-	awaitingHost bool
+	state      *shellState
+	input      textinput.Model
+	promptSpin spinner.Model
+	width      int
+	height     int
+	busy       bool
 }
 
 type commandResultMsg struct {
@@ -34,11 +33,6 @@ type hostSyncMsg struct {
 	bootstrapped bool
 	apps         []string
 	err          error
-}
-
-type hostPromptMsg struct {
-	host string
-	err  error
 }
 
 type externalCmdMsg struct {
@@ -57,16 +51,15 @@ func newShellModel(state *shellState) shellModel {
 	spin.Spinner = spinner.Spinner{Frames: []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}, FPS: 120 * time.Millisecond}
 
 	model := shellModel{
-		state:        state,
-		input:        input,
-		promptSpin:   spin,
-		awaitingHost: state.hostPrompt,
+		state:      state,
+		input:      input,
+		promptSpin: spin,
 	}
 	if len(state.output) == 0 {
-		model.state.appendOutput(renderBanner())
-	}
-	if state.hostPrompt {
-		model.state.appendOutput("No host configured. Enter a host or IP to bootstrap:")
+		model.state.appendOutput(renderBanner(state))
+		if state.setupNeeded {
+			model.state.setupHinted = true
+		}
 	}
 	if state.connState == connUnknown && !state.hostPrompt {
 		model.state.connState = connConnecting
@@ -120,14 +113,6 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			line := strings.TrimSpace(m.input.Value())
 			m.input.SetValue("")
-			if m.awaitingHost {
-				if line == "" {
-					m.state.appendOutput("Host is required.")
-					return m, nil
-				}
-				m.busy = true
-				return m, handleHostPromptCmd(m.state, line)
-			}
 			if line == "" {
 				// Empty Enter should emit a prompt line like a real shell.
 				m.appendCommandLine("")
@@ -147,6 +132,9 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if result != "" {
 				m.state.appendOutput(result)
+			}
+			if m.state.setupAction != nil {
+				return m, tea.Quit
 			}
 			return m, nil
 		}
@@ -200,13 +188,17 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state.connError = ""
 		m.state.bootstrapped = msg.bootstrapped
 		if !msg.bootstrapped {
+			m.state.setupNeeded = true
 			m.state.appsLoaded = false
 			m.state.apps = nil
+			m.state.pendingCmd = nil
+			if !m.state.setupHinted {
+				m.state.appendOutput(renderSetupBanner())
+				m.state.setupHinted = true
+			}
+			return m, nil
 		}
-		if shouldBootstrap(m.state, msg.bootstrapped) {
-			m.busy = true
-			return m, triggerBootstrapCmd(m.state)
-		}
+		m.state.setupNeeded = false
 		if msg.bootstrapped {
 			m.state.apps = msg.apps
 			m.state.appsLoaded = true
@@ -224,24 +216,6 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-	case hostPromptMsg:
-		m.busy = false
-		if msg.err != nil {
-			m.state.appendOutput(fmt.Sprintf("error: %v", msg.err))
-			return m, nil
-		}
-		m.awaitingHost = false
-		m.state.hostPrompt = false
-		if msg.host != "" {
-			m.state.cfg.DefaultHost = msg.host
-			m.state.host = msg.host
-			m.state.appendOutput(fmt.Sprintf("Default host set to %s", msg.host))
-		}
-		m.state.connState = connConnecting
-		m.state.syncing = true
-		m.state.appsLoaded = false
-		m.state.apps = nil
-		return m, syncHostCmd(m.state)
 	case externalCmdMsg:
 		m.state.externalCmd = &msg.cmd
 		m.busy = false
@@ -333,12 +307,36 @@ func (m *shellModel) historyNext() {
 	m.input.CursorEnd()
 }
 
-func renderBanner() string {
+func renderBanner(state *shellState) string {
+	if state != nil && state.setupNeeded {
+		return renderSetupBanner()
+	}
+	return renderRunBanner()
+}
+
+func renderRunBanner() string {
 	theme := shellTheme()
 	if !theme.Enabled {
 		return "\n- run appname to start building • help\n"
 	}
 	return fmt.Sprintf("\n- %s %s to start building • %s\n", theme.BannerVerb.Render("run"), theme.BannerApp.Render("appname"), theme.BannerHelp.Render("help"))
+}
+
+func renderSetupBanner() string {
+	theme := shellTheme()
+	if !theme.Enabled {
+		return "\n- Welcome to viberun. Type setup to connect your server.\n"
+	}
+	setup := theme.BannerVerb.Render("setup")
+	return fmt.Sprintf("\n- Welcome to viberun. Type %s to connect your server.\n", setup)
+}
+
+func renderFirstAppHint() string {
+	theme := shellTheme()
+	if !theme.Enabled {
+		return "Create your first app: run myapp"
+	}
+	return fmt.Sprintf("Create your first app: %s %s", theme.BannerVerb.Render("run"), theme.BannerApp.Render("myapp"))
 }
 
 func renderHeader(state *shellState) string {

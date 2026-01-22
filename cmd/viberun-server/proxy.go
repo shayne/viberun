@@ -38,11 +38,13 @@ type proxySetupFlags struct {
 
 func handleProxyCommand(args []string) error {
 	if len(args) == 0 || hasHelpFlag(args) {
-		return fmt.Errorf("usage: viberun-server proxy setup --domain <domain> --public-ip <ip> --username <u> --password-stdin | viberun-server proxy url <app> | viberun-server proxy info <app> | viberun-server proxy users <list|add|remove|set-password>")
+		return fmt.Errorf("usage: viberun-server proxy setup --domain <domain> --public-ip <ip> --username <u> --password-stdin | viberun-server proxy config | viberun-server proxy url <app> | viberun-server proxy info <app> | viberun-server proxy users <list|add|remove|set-password>")
 	}
 	switch args[0] {
 	case "setup":
 		return handleProxySetup(args[1:])
+	case "config":
+		return handleProxyConfig()
 	case "url":
 		return handleProxyURL(args[1:])
 	case "info":
@@ -58,8 +60,46 @@ func handleProxyCommand(args []string) error {
 	case "users":
 		return handleProxyUsers(args[1:])
 	default:
-		return fmt.Errorf("usage: viberun-server proxy setup --domain <domain> --public-ip <ip> --username <u> --password-stdin | viberun-server proxy url <app> | viberun-server proxy info <app> | viberun-server proxy users <list|add|remove|set-password>")
+		return fmt.Errorf("usage: viberun-server proxy setup --domain <domain> --public-ip <ip> --username <u> --password-stdin | viberun-server proxy config | viberun-server proxy url <app> | viberun-server proxy info <app> | viberun-server proxy users <list|add|remove|set-password>")
 	}
+}
+
+type proxyConfigSummary struct {
+	Enabled     bool     `json:"enabled"`
+	BaseDomain  string   `json:"base_domain"`
+	PublicIP    string   `json:"public_ip"`
+	PrimaryUser string   `json:"primary_user"`
+	ProxyImage  string   `json:"proxy_image"`
+	Users       []string `json:"users"`
+}
+
+func handleProxyConfig() error {
+	cfg, _, err := proxy.LoadConfig()
+	if err != nil {
+		return err
+	}
+	cfg = applyProxyDefaults(cfg)
+	users := make([]string, 0, len(cfg.Users))
+	for _, user := range cfg.Users {
+		name := strings.TrimSpace(user.Username)
+		if name != "" {
+			users = append(users, name)
+		}
+	}
+	summary := proxyConfigSummary{
+		Enabled:     cfg.Enabled,
+		BaseDomain:  cfg.BaseDomain,
+		PublicIP:    cfg.PublicIP,
+		PrimaryUser: cfg.PrimaryUser,
+		ProxyImage:  cfg.ProxyImage,
+		Users:       proxy.NormalizeUserList(users),
+	}
+	data, err := json.Marshal(summary)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stdout, string(data))
+	return nil
 }
 
 func handleProxySetup(args []string) error {

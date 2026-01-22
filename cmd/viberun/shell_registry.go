@@ -22,6 +22,7 @@ type CommandSpec struct {
 	Options     []string
 	Examples    []string
 	Children    []HelpChild
+	Advanced    bool
 	// RequiresSync gates execution until the initial host+app sync completes.
 	// Keep this explicit so future commands don't accidentally bypass remote readiness.
 	RequiresSync bool
@@ -33,11 +34,13 @@ func shellCommandSpecs() []CommandSpec {
 		{Key: "app", Display: "app <name>", Scope: scopeGlobal, Summary: "enter app config mode", Description: "Enter app config mode.", Usage: "app <name>", Examples: []string{"app myapp"}, RequiresSync: true},
 		{Key: "run", Display: "run <app>", Scope: scopeGlobal, Summary: "attach to the app session", Description: "Attach to the app tmux session (creates the app if it doesn't exist).", Usage: "run <app>", Examples: []string{"run myapp"}, RequiresSync: true},
 		{Key: "shell", Display: "shell <app>", Scope: scopeGlobal, Summary: "open an app shell", Description: "Open a shell in the app container.", Usage: "shell <app>", Examples: []string{"shell myapp"}, RequiresSync: true},
+		{Key: "rm", Display: "rm <app>", Scope: scopeGlobal, Aliases: []string{"delete"}, Summary: "delete an app", Description: "Delete an app and its snapshots.", Usage: "rm <app>", Examples: []string{"rm myapp"}, RequiresSync: true},
 		{Key: "config", Display: "config", Scope: scopeGlobal, Summary: "show or update local config", Description: "Show or update local configuration.", Usage: "config show | config set host <host> | config set agent <provider>", Examples: []string{"config show", "config set host root@1.2.3.4", "config set agent codex"}, RequiresSync: false, Children: []HelpChild{
 			{Cmd: "config show", Desc: "show local config"},
 			{Cmd: "config set host <host>", Desc: "set default host"},
 			{Cmd: "config set agent <provider>", Desc: "set default agent"},
 		}},
+		{Key: "setup", Display: "setup", Scope: scopeGlobal, Summary: "connect a server and get started", Description: "Guide you through connecting a server and installing viberun. You'll need an SSH login like user@1.2.3.4.", Usage: "setup", Examples: []string{"setup"}, Advanced: true, RequiresSync: false},
 		{Key: "proxy", Display: "proxy", Scope: scopeGlobal, Summary: "configure host proxy", Description: "Configure host proxy for app URLs.", Usage: "proxy setup [host]", Examples: []string{"proxy setup"}, RequiresSync: true, Children: []HelpChild{
 			{Cmd: "proxy setup [host]", Desc: "configure host proxy"},
 		}},
@@ -47,8 +50,9 @@ func shellCommandSpecs() []CommandSpec {
 			{Cmd: "users remove --username <u>", Desc: "remove a user"},
 			{Cmd: "users set-password --username <u>", Desc: "set a password"},
 		}},
+		{Key: "wipe", Display: "wipe", Scope: scopeGlobal, Summary: "wipe server data", Description: "Remove viberun data from a server.", Usage: "wipe [host]", Examples: []string{"wipe"}, Advanced: true, RequiresSync: true},
 		{Key: "help", Display: "help", Scope: scopeGlobal, Aliases: []string{"?"}, Summary: "show this help", Description: "Show help, or help for a specific command.", Usage: "help [command]", Examples: []string{"help", "help run"}, RequiresSync: false},
-		{Key: "exit", Display: "exit | quit", Scope: scopeGlobal, Aliases: []string{"quit"}, Summary: "exit shell", Description: "Exit the shell.", Usage: "exit | quit", Examples: []string{"exit"}, RequiresSync: false},
+		{Key: "exit", Display: "exit", Scope: scopeGlobal, Aliases: []string{"quit"}, Summary: "exit shell", Description: "Exit the shell.", Usage: "exit", Examples: []string{"exit"}, RequiresSync: false},
 
 		{Key: "show", Display: "show", Scope: scopeAppConfig, Summary: "show app summary", Description: "Show app summary.", Usage: "show", RequiresSync: true},
 		{Key: "run", Display: "run", Scope: scopeAppConfig, Summary: "attach to the app session", Description: "Attach to the current app session (creates the app if it doesn't exist).", Usage: "run", RequiresSync: true},
@@ -57,7 +61,7 @@ func shellCommandSpecs() []CommandSpec {
 		{Key: "snapshots", Display: "snapshots", Scope: scopeAppConfig, Summary: "list snapshots", Description: "List snapshots for the app.", Usage: "snapshots", RequiresSync: true},
 		{Key: "restore", Display: "restore <vN|latest>", Scope: scopeAppConfig, Summary: "restore snapshot", Description: "Restore the app volume from a snapshot.", Usage: "restore <vN|latest>", Examples: []string{"restore latest", "restore v3"}, RequiresSync: true},
 		{Key: "update", Display: "update", Scope: scopeAppConfig, Summary: "recreate container", Description: "Recreate the app container.", Usage: "update", RequiresSync: true},
-		{Key: "delete", Display: "delete | rm", Scope: scopeAppConfig, Aliases: []string{"rm"}, Summary: "delete app", Description: "Delete the app and snapshots.", Usage: "delete | rm", RequiresSync: true},
+		{Key: "delete", Display: "delete", Scope: scopeAppConfig, Aliases: []string{"rm"}, Summary: "delete app", Description: "Delete the app and snapshots.", Usage: "delete", RequiresSync: true},
 		{Key: "url", Display: "url", Scope: scopeAppConfig, Summary: "manage app URL", Description: "Show or manage the app URL.", Usage: "url [show|open|public|private|disable|enable|set-domain <domain>|reset-domain]", Options: []string{"show", "open", "public", "private", "disable", "enable", "set-domain <domain>", "reset-domain"}, Examples: []string{"url", "url public", "url set-domain myapp.com"}, RequiresSync: true, Children: []HelpChild{
 			{Cmd: "url show", Desc: "show URL info"},
 			{Cmd: "url open", Desc: "open URL in browser"},
@@ -70,7 +74,7 @@ func shellCommandSpecs() []CommandSpec {
 		}},
 		{Key: "users", Display: "users", Scope: scopeAppConfig, Summary: "manage app access", Description: "Manage app access list.", Usage: "users", RequiresSync: true},
 		{Key: "help", Display: "help", Scope: scopeAppConfig, Aliases: []string{"?"}, Summary: "show this help", Description: "Show help for app commands.", Usage: "help [command]", Examples: []string{"help", "help url"}, RequiresSync: false},
-		{Key: "exit", Display: "exit | back", Scope: scopeAppConfig, Aliases: []string{"back"}, Summary: "back to global", Description: "Return to the global shell.", Usage: "exit | back", RequiresSync: false},
+		{Key: "exit", Display: "exit", Scope: scopeAppConfig, Aliases: []string{"back"}, Summary: "back to global", Description: "Return to the global shell.", Usage: "exit", RequiresSync: false},
 	}
 }
 

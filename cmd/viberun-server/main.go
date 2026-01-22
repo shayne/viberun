@@ -50,6 +50,12 @@ type restoreQueue struct {
 
 var errRestoreInProgress = errors.New("restore already in progress")
 
+var (
+	version   = "dev"
+	commit    = ""
+	buildDate = ""
+)
+
 func newRestoreQueue() *restoreQueue {
 	return &restoreQueue{ch: make(chan struct{}, 1)}
 }
@@ -98,6 +104,24 @@ func (q *restoreQueue) Finish() {
 	q.inProgress = false
 	q.ref = ""
 	q.mu.Unlock()
+}
+
+func versionString() string {
+	trimmed := strings.TrimSpace(version)
+	if trimmed == "" {
+		trimmed = "dev"
+	}
+	extra := []string{}
+	if strings.TrimSpace(commit) != "" {
+		extra = append(extra, strings.TrimSpace(commit))
+	}
+	if strings.TrimSpace(buildDate) != "" {
+		extra = append(extra, strings.TrimSpace(buildDate))
+	}
+	if len(extra) == 0 {
+		return trimmed
+	}
+	return fmt.Sprintf("%s (%s)", trimmed, strings.Join(extra, " "))
 }
 
 type usageError struct {
@@ -174,6 +198,10 @@ func runServer() error {
 		if err := handleAppsCommand(); err != nil {
 			return err
 		}
+		return nil
+	}
+	if args[0] == "version" || args[0] == "--version" || args[0] == "-v" {
+		fmt.Fprintln(os.Stdout, versionString())
 		return nil
 	}
 	result, err := yargs.ParseFlags[serverFlags](args)

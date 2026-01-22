@@ -666,12 +666,8 @@ func handleBootstrap(args []string) error {
 		}
 	}
 	if tty {
-		if promptProxySetup() {
-			if err := runProxySetupFlow(resolved.Host); err != nil {
-				fmt.Fprintf(os.Stderr, "proxy setup failed: %v\n", err)
-			}
-		} else {
-			fmt.Fprintln(os.Stdout, "Set up a public domain name later with: viberun proxy setup")
+		if err := runProxySetupFlow(resolved.Host, proxySetupOptions{updateArtifacts: true, showSkipHint: true}); err != nil {
+			fmt.Fprintf(os.Stderr, "proxy setup failed: %v\n", err)
 		}
 	}
 	fmt.Fprintln(os.Stdout, "Bootstrap complete.")
@@ -720,10 +716,7 @@ func handleProxy(args []string) error {
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return fmt.Errorf("proxy setup requires a TTY")
 	}
-	if err := ensureDevServerSynced(resolved.Host); err != nil {
-		return fmt.Errorf("failed to sync dev server: %w", err)
-	}
-	if err := runProxySetupFlow(resolved.Host); err != nil {
+	if err := runProxySetupFlow(resolved.Host, proxySetupOptions{updateArtifacts: true, forceSetup: true}); err != nil {
 		return fmt.Errorf("proxy setup failed: %w", err)
 	}
 	return nil
@@ -830,19 +823,13 @@ func handleWipe(args []string) error {
 	if _, err := exec.LookPath("ssh"); err != nil {
 		return fmt.Errorf("ssh is required but was not found in PATH")
 	}
-	if err := ensureDevServerSynced(resolved.Host); err != nil {
-		return fmt.Errorf("failed to sync dev server: %w", err)
+	wiped, err := runWipeFlow(resolved.Host, true)
+	if err != nil {
+		return fmt.Errorf("wipe failed: %w", err)
 	}
-	if err := tui.PromptWipeConfirm(os.Stdin, os.Stdout); err != nil {
-		return fmt.Errorf("wipe cancelled: %w", err)
+	if !wiped {
+		fmt.Fprintln(os.Stdout, "Wipe cancelled.")
 	}
-	if err := runRemoteWipe(resolved.Host); err != nil {
-		return fmt.Errorf("remote wipe failed: %w", err)
-	}
-	if err := config.RemoveConfigFiles(); err != nil {
-		return fmt.Errorf("local wipe failed: %w", err)
-	}
-	fmt.Fprintln(os.Stdout, "Wipe complete.")
 	return nil
 }
 
@@ -857,51 +844,157 @@ func promptProxySetup() bool {
 	return input == "y" || input == "yes"
 }
 
-func runProxySetupFlow(host string) error {
-	if err := ensureDevServerSynced(host); err != nil {
-		return err
+type proxySetupOptions struct {
+	updateArtifacts bool
+	forceSetup      bool
+	showSkipHint    bool
+}
+
+func runProxySetupFlow(host string, opts proxySetupOptions) error {
+	configSummary, err := fetchRemoteProxyConfig(host)
+	configured := err == nil && configSummary.Enabled && strings.TrimSpace(configSummary.BaseDomain) != "" && strings.TrimSpace(configSummary.PrimaryUser) != ""
+	if err != nil && !opts.forceSetup {
+		if !promptYesNoDefaultNo("Existing public domain settings could not be read. Continue with setup? [y/N]: ") {
+			if opts.showSkipHint {
+				fmt.Fprintln(os.Stdout, "Set up a public domain name later with: viberun proxy setup")
+			}
+			return nil
+		}
 	}
+
+	shouldRunSetup := false
+	editConfig := false
+	domain := ""
+	publicIP := ""
+	username := ""
+	password := ""
+
+	if configured {
+		printProxyConfigSummary(configSummary)
+		editConfig = promptYesNoDefaultNo("Edit public domain settings? [y/N]: ")
+		if editConfig || opts.updateArtifacts {
+			shouldRunSetup = true
+		}
+		if !shouldRunSetup {
+			return nil
+		}
+		domain = strings.TrimSpace(configSummary.BaseDomain)
+		publicIP = strings.TrimSpace(configSummary.PublicIP)
+		username = strings.TrimSpace(configSummary.PrimaryUser)
+		if editConfig {
+			if promptYesNoDefaultNo("Change public domain? [y/N]: ") {
+				domain, err = tui.PromptProxyDomainWithDefault(os.Stdin, os.Stdout, "myapp.", domain)
+				if err != nil {
+					return err
+				}
+			}
+			if strings.TrimSpace(publicIP) == "" {
+				publicIP, err = fetchRemotePublicIP(host)
+				if err != nil {
+					return err
+				}
+			}
+			if promptYesNoDefaultNo("Change public IP? [y/N]: ") {
+				publicIP, err = tui.PromptProxyPublicIP(os.Stdin, os.Stdout, publicIP)
+				if err != nil {
+					return err
+				}
+			}
+			if promptYesNoDefaultNo("Change primary user? [y/N]: ") {
+				username, password, err = tui.PromptProxyAuth(os.Stdin, os.Stdout, username)
+				if err != nil {
+					return err
+				}
+			}
+		} else if strings.TrimSpace(publicIP) == "" {
+			publicIP, err = fetchRemotePublicIP(host)
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		if !opts.forceSetup && !promptProxySetup() {
+			if opts.showSkipHint {
+				fmt.Fprintln(os.Stdout, "Set up a public domain name later with: viberun proxy setup")
+			}
+			return nil
+		}
+		shouldRunSetup = true
+		publicIP, err = fetchRemotePublicIP(host)
+		if err != nil {
+			return err
+		}
+		styler := newURLStyler(os.Stdout)
+		fmt.Fprintf(os.Stdout, "%s %s\n", styler.label("Detected public IP:"), styler.ip(publicIP))
+		domain, err = tui.PromptProxyDomain(os.Stdin, os.Stdout, "myapp.")
+		if err != nil {
+			return err
+		}
+		username, password, err = tui.PromptProxyAuth(os.Stdin, os.Stdout, "")
+		if err != nil {
+			return err
+		}
+	}
+
 	proxyImage := ""
-	if isDevRun() || isDevVersion() {
+	if shouldRunSetup && opts.updateArtifacts && (isDevRun() || isDevVersion()) {
+		if err := ensureDevServerSynced(host); err != nil {
+			return err
+		}
 		if err := stageLocalProxyImage(host); err != nil {
 			return err
 		}
 		proxyImage = devProxyImageTag()
 	}
-	publicIP, err := fetchRemotePublicIP(host)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(os.Stdout, "Detected public IP: %s\n", publicIP)
-	domain, err := tui.PromptProxyDomain(os.Stdin, os.Stdout, "myapp.")
-	if err != nil {
-		return err
-	}
-	username, password, err := tui.PromptProxyAuth(os.Stdin, os.Stdout, "")
-	if err != nil {
-		return err
-	}
+
+	domainChanged := !configured || strings.TrimSpace(domain) != strings.TrimSpace(configSummary.BaseDomain)
 	if err := runRemoteProxySetup(host, domain, publicIP, username, password, proxyImage); err != nil {
 		return err
 	}
-	printProxySetupInstructions(domain, publicIP, username)
-	if err := promptRecreateApps(host); err != nil {
-		return err
+	if !configured || editConfig {
+		printProxySetupInstructions(domain, publicIP, username)
+	}
+	if domainChanged {
+		if err := promptRecreateApps(host); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 func printProxySetupInstructions(domain string, publicIP string, username string) {
-	fmt.Fprintln(os.Stdout, "DNS setup:")
-	fmt.Fprintf(os.Stdout, "  Create an A record for *.%s pointing to %s\n", domain, publicIP)
-	fmt.Fprintf(os.Stdout, "  Example URL: https://myapp.%s\n", domain)
+	styler := newURLStyler(os.Stdout)
+	fmt.Fprintln(os.Stdout, styler.header("DNS setup:"))
+	dnsLine := fmt.Sprintf("Create an A record for %s pointing to %s", styler.link("*."+domain), styler.ip(publicIP))
+	fmt.Fprintf(os.Stdout, "  %s\n", styler.label(dnsLine))
+	exampleLine := fmt.Sprintf("Example URL: %s", styler.link("https://myapp."+domain))
+	fmt.Fprintf(os.Stdout, "  %s\n", styler.label(exampleLine))
 	if strings.TrimSpace(username) != "" {
-		fmt.Fprintln(os.Stdout, "Access:")
-		fmt.Fprintln(os.Stdout, "  All apps require login by default.")
-		fmt.Fprintf(os.Stdout, "  Log in as %s with the password you just set.\n", username)
+		fmt.Fprintln(os.Stdout, styler.header("Access:"))
+		fmt.Fprintf(os.Stdout, "  %s\n", styler.label("All apps require login by default."))
+		accessLine := fmt.Sprintf("Log in as %s with the password you just set.", styler.value(username))
+		fmt.Fprintf(os.Stdout, "  %s\n", styler.label(accessLine))
 	}
-	fmt.Fprintln(os.Stdout, "Firewall:")
-	fmt.Fprintln(os.Stdout, "  Ensure ports 80 and 443 are open to the internet.")
+	fmt.Fprintln(os.Stdout, styler.header("Firewall:"))
+	firewallLine := fmt.Sprintf("Ensure ports %s are open to the internet.", styler.value("80 and 443"))
+	fmt.Fprintf(os.Stdout, "  %s\n", styler.label(firewallLine))
+}
+
+func printProxyConfigSummary(summary proxyConfigSummary) {
+	styler := newURLStyler(os.Stdout)
+	fmt.Fprintln(os.Stdout, styler.header("Current public domain setup:"))
+	if strings.TrimSpace(summary.BaseDomain) != "" {
+		fmt.Fprintf(os.Stdout, "  %s %s\n", styler.label("Domain:"), styler.value(summary.BaseDomain))
+	}
+	if strings.TrimSpace(summary.PublicIP) != "" {
+		fmt.Fprintf(os.Stdout, "  %s %s\n", styler.label("Public IP:"), styler.ip(summary.PublicIP))
+	}
+	if strings.TrimSpace(summary.PrimaryUser) != "" {
+		fmt.Fprintf(os.Stdout, "  %s %s\n", styler.label("Primary user:"), styler.value(summary.PrimaryUser))
+	}
+	if len(summary.Users) > 1 {
+		fmt.Fprintf(os.Stdout, "  %s %s\n", styler.label("Users:"), styler.value(strings.Join(summary.Users, ", ")))
+	}
 }
 
 func fetchRemotePublicIP(host string) (string, error) {
@@ -918,7 +1011,13 @@ func fetchRemotePublicIP(host string) (string, error) {
 }
 
 func runRemoteProxySetup(host string, domain string, publicIP string, username string, password string, proxyImage string) error {
-	remoteArgs := []string{"/usr/local/bin/viberun-server", "proxy", "setup", "--domain", domain, "--public-ip", publicIP, "--username", username, "--password-stdin"}
+	remoteArgs := []string{"/usr/local/bin/viberun-server", "proxy", "setup", "--domain", domain, "--public-ip", publicIP}
+	if strings.TrimSpace(username) != "" {
+		remoteArgs = append(remoteArgs, "--username", username)
+	}
+	if strings.TrimSpace(password) != "" {
+		remoteArgs = append(remoteArgs, "--password-stdin")
+	}
 	if strings.TrimSpace(proxyImage) != "" {
 		remoteArgs = append(remoteArgs, "--proxy-image", proxyImage)
 	}
@@ -927,7 +1026,9 @@ func runRemoteProxySetup(host string, domain string, publicIP string, username s
 	sshArgs = append([]string{"-o", "LogLevel=ERROR"}, sshArgs...)
 	cmd := exec.Command("ssh", sshArgs...)
 	cmd.Env = normalizedSshEnv()
-	cmd.Stdin = strings.NewReader(password + "\n")
+	if strings.TrimSpace(password) != "" {
+		cmd.Stdin = strings.NewReader(password + "\n")
+	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		trimmed := strings.TrimSpace(string(output))
@@ -975,6 +1076,15 @@ func runRemoteCommand(host string, remoteArgs []string) (string, error) {
 	return string(output), nil
 }
 
+func fetchRemoteServerVersion(host string) (string, error) {
+	remoteArgs := sshcmd.WithSudo(host, []string{"viberun-server", "version"})
+	output, err := runRemoteCommandWithInput(host, remoteArgs, nil)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(output), nil
+}
+
 func runRemoteCommandWithInput(host string, remoteArgs []string, input io.Reader) (string, error) {
 	sshArgs := sshcmd.BuildArgs(host, remoteArgs, false)
 	sshArgs = append([]string{"-o", "LogLevel=ERROR"}, sshArgs...)
@@ -1008,6 +1118,15 @@ type proxyInfo struct {
 	Enabled      bool     `json:"enabled"`
 }
 
+type proxyConfigSummary struct {
+	Enabled     bool     `json:"enabled"`
+	BaseDomain  string   `json:"base_domain"`
+	PublicIP    string   `json:"public_ip"`
+	PrimaryUser string   `json:"primary_user"`
+	ProxyImage  string   `json:"proxy_image"`
+	Users       []string `json:"users"`
+}
+
 func fetchProxyInfo(resolved target.Resolved) (proxyInfo, error) {
 	remoteArgs := []string{"viberun-server", "proxy", "info", resolved.App}
 	remoteArgs = sshcmd.WithSudo(resolved.Host, remoteArgs)
@@ -1020,6 +1139,19 @@ func fetchProxyInfo(resolved target.Resolved) (proxyInfo, error) {
 		return proxyInfo{}, fmt.Errorf("failed to parse proxy info: %w", err)
 	}
 	return info, nil
+}
+
+func fetchRemoteProxyConfig(host string) (proxyConfigSummary, error) {
+	remoteArgs := sshcmd.WithSudo(host, []string{"viberun-server", "proxy", "config"})
+	output, err := runRemoteCommandWithInput(host, remoteArgs, nil)
+	if err != nil {
+		return proxyConfigSummary{}, err
+	}
+	var summary proxyConfigSummary
+	if err := json.Unmarshal([]byte(output), &summary); err != nil {
+		return proxyConfigSummary{}, fmt.Errorf("failed to parse proxy config: %w", err)
+	}
+	return summary, nil
 }
 
 func runRemoteUsersList(host string) error {
@@ -1356,6 +1488,13 @@ func (s urlStyler) link(text string) string {
 	return s.linkStyle.Render(text)
 }
 
+func (s urlStyler) ip(text string) string {
+	if !s.enabled {
+		return text
+	}
+	return s.ipStyle.Render(text)
+}
+
 func (s urlStyler) dnsLine(host string, ip string) string {
 	if !s.enabled {
 		return fmt.Sprintf("create an A record for %s -> %s", host, ip)
@@ -1410,6 +1549,58 @@ func (s urlStyler) commands(out io.Writer, lines []commandLine) {
 		}
 		fmt.Fprintf(out, "  %s  %s\n", cmd, comment)
 	}
+}
+
+type loadOutputStyler struct {
+	out    io.Writer
+	styler urlStyler
+	buffer []byte
+}
+
+func newLoadOutputStyler(out io.Writer) *loadOutputStyler {
+	return &loadOutputStyler{
+		out:    out,
+		styler: newURLStyler(out),
+	}
+}
+
+func (s *loadOutputStyler) Write(p []byte) (int, error) {
+	s.buffer = append(s.buffer, p...)
+	for {
+		idx := bytes.IndexByte(s.buffer, '\n')
+		if idx == -1 {
+			break
+		}
+		line := string(s.buffer[:idx])
+		s.buffer = s.buffer[idx+1:]
+		if err := s.writeLine(line); err != nil {
+			return len(p), err
+		}
+	}
+	return len(p), nil
+}
+
+func (s *loadOutputStyler) Flush() error {
+	if len(s.buffer) == 0 {
+		return nil
+	}
+	line := string(s.buffer)
+	s.buffer = s.buffer[:0]
+	return s.writeLine(line)
+}
+
+func (s *loadOutputStyler) writeLine(line string) error {
+	line = strings.TrimSuffix(line, "\r")
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "Loaded image:") {
+		tag := strings.TrimSpace(strings.TrimPrefix(trimmed, "Loaded image:"))
+		if tag != "" {
+			_, err := fmt.Fprintf(s.out, "%s %s\n", s.styler.label("Loaded image:"), s.styler.value(tag))
+			return err
+		}
+	}
+	_, err := fmt.Fprintln(s.out, line)
+	return err
 }
 
 func wantPrettyOutput(out io.Writer) bool {
@@ -1909,6 +2100,71 @@ func versionString() string {
 	return fmt.Sprintf("%s (%s)", trimmed, strings.Join(extra, " "))
 }
 
+type semver struct {
+	major int
+	minor int
+	patch int
+}
+
+func compareSemver(left string, right string) (int, bool) {
+	leftVer, ok := parseSemver(left)
+	if !ok {
+		return 0, false
+	}
+	rightVer, ok := parseSemver(right)
+	if !ok {
+		return 0, false
+	}
+	if leftVer.major != rightVer.major {
+		if leftVer.major < rightVer.major {
+			return -1, true
+		}
+		return 1, true
+	}
+	if leftVer.minor != rightVer.minor {
+		if leftVer.minor < rightVer.minor {
+			return -1, true
+		}
+		return 1, true
+	}
+	if leftVer.patch != rightVer.patch {
+		if leftVer.patch < rightVer.patch {
+			return -1, true
+		}
+		return 1, true
+	}
+	return 0, true
+}
+
+func parseSemver(value string) (semver, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return semver{}, false
+	}
+	trimmed = strings.TrimPrefix(trimmed, "v")
+	trimmed = strings.TrimPrefix(trimmed, "V")
+	if idx := strings.IndexAny(trimmed, "-+"); idx >= 0 {
+		trimmed = trimmed[:idx]
+	}
+	parts := strings.Split(trimmed, ".")
+	if len(parts) < 3 {
+		return semver{}, false
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return semver{}, false
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return semver{}, false
+	}
+	patch, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return semver{}, false
+	}
+	return semver{major: major, minor: minor, patch: patch}, true
+}
+
 func runInteractiveSSHProxy(resolved target.Resolved, sshArgs []string, outputTail *tailBuffer) error {
 	cmd := exec.Command("ssh", sshArgs...)
 	cmd.Env = normalizedSshEnv()
@@ -2251,95 +2507,102 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ -n "$local_path" ]; then
-  if [ ! -f "$local_path" ]; then
-    echo "missing local server binary at $local_path" >&2
+if [ -n "${VIBERUN_SKIP_SERVER_INSTALL:-}" ]; then
+  if [ ! -x "$VIBERUN_SERVER_PATH" ]; then
+    echo "missing viberun-server at $VIBERUN_SERVER_PATH; cannot skip install" >&2
     exit 1
   fi
-  case "$local_path" in
-    *.tar.gz)
-      if ! need_cmd tar; then
-        echo "tar is required" >&2
-        exit 1
-      fi
-      tmp_dir="$(mktemp -d)"
-      tar -xzf "$local_path" -C "$tmp_dir"
-      binary_path="$tmp_dir/viberun-server-${os}-${arch}"
-      if [ ! -f "$binary_path" ]; then
-        echo "missing extracted binary: viberun-server-${os}-${arch}" >&2
-        exit 1
-      fi
-      ;;
-    *)
-      binary_path="$local_path"
-      ;;
-  esac
 else
-  if [ "$VIBERUN_SERVER_VERSION" = "latest" ]; then
-    download_url="https://github.com/${VIBERUN_SERVER_REPO}/releases/latest/download/${asset}"
-    sha_url="https://github.com/${VIBERUN_SERVER_REPO}/releases/latest/download/${sha}"
-  else
-    version="$VIBERUN_SERVER_VERSION"
-    case "$version" in
-      v*)
+  if [ -n "$local_path" ]; then
+    if [ ! -f "$local_path" ]; then
+      echo "missing local server binary at $local_path" >&2
+      exit 1
+    fi
+    case "$local_path" in
+      *.tar.gz)
+        if ! need_cmd tar; then
+          echo "tar is required" >&2
+          exit 1
+        fi
+        tmp_dir="$(mktemp -d)"
+        tar -xzf "$local_path" -C "$tmp_dir"
+        binary_path="$tmp_dir/viberun-server-${os}-${arch}"
+        if [ ! -f "$binary_path" ]; then
+          echo "missing extracted binary: viberun-server-${os}-${arch}" >&2
+          exit 1
+        fi
         ;;
       *)
-        version="v$version"
+        binary_path="$local_path"
         ;;
     esac
-    download_url="https://github.com/${VIBERUN_SERVER_REPO}/releases/download/${version}/${asset}"
-    sha_url="https://github.com/${VIBERUN_SERVER_REPO}/releases/download/${version}/${sha}"
-  fi
-
-  tmp_dir="$(mktemp -d)"
-  if need_cmd curl; then
-    curl -fsSL "$download_url" -o "$tmp_dir/$asset"
-    curl -fsSL "$sha_url" -o "$tmp_dir/$sha"
   else
-    wget -qO "$tmp_dir/$asset" "$download_url"
-    wget -qO "$tmp_dir/$sha" "$sha_url"
+    if [ "$VIBERUN_SERVER_VERSION" = "latest" ]; then
+      download_url="https://github.com/${VIBERUN_SERVER_REPO}/releases/latest/download/${asset}"
+      sha_url="https://github.com/${VIBERUN_SERVER_REPO}/releases/latest/download/${sha}"
+    else
+      version="$VIBERUN_SERVER_VERSION"
+      case "$version" in
+        v*)
+          ;;
+        *)
+          version="v$version"
+          ;;
+      esac
+      download_url="https://github.com/${VIBERUN_SERVER_REPO}/releases/download/${version}/${asset}"
+      sha_url="https://github.com/${VIBERUN_SERVER_REPO}/releases/download/${version}/${sha}"
+    fi
+
+    tmp_dir="$(mktemp -d)"
+    if need_cmd curl; then
+      curl -fsSL "$download_url" -o "$tmp_dir/$asset"
+      curl -fsSL "$sha_url" -o "$tmp_dir/$sha"
+    else
+      wget -qO "$tmp_dir/$asset" "$download_url"
+      wget -qO "$tmp_dir/$sha" "$sha_url"
+    fi
+
+    normalize_sha() {
+      awk '{
+        fname=$NF
+        star=""
+        if (fname ~ /^\*/) { star="*"; fname=substr(fname,2) }
+        sub(/^.*\//, "", fname)
+        print $1 "  " star fname
+      }'
+    }
+
+    sha_check="$sha"
+    if grep -q '/' "$tmp_dir/$sha"; then
+      normalize_sha < "$tmp_dir/$sha" > "$tmp_dir/${sha}.normalized"
+      sha_check="${sha}.normalized"
+    fi
+
+    if command -v sha256sum >/dev/null 2>&1; then
+      (cd "$tmp_dir" && sha256sum -c "$sha_check")
+    elif command -v shasum >/dev/null 2>&1; then
+      (cd "$tmp_dir" && shasum -a 256 -c "$sha_check")
+    else
+      echo "sha256sum or shasum is required" >&2
+      exit 1
+    fi
+
+    if ! need_cmd tar; then
+      echo "tar is required" >&2
+      exit 1
+    fi
+    tar -xzf "$tmp_dir/$asset" -C "$tmp_dir"
+    binary_path="$tmp_dir/viberun-server-${os}-${arch}"
+    if [ ! -f "$binary_path" ]; then
+      echo "missing extracted binary: viberun-server-${os}-${arch}" >&2
+      exit 1
+    fi
   fi
 
-  normalize_sha() {
-    awk '{
-      fname=$NF
-      star=""
-      if (fname ~ /^\*/) { star="*"; fname=substr(fname,2) }
-      sub(/^.*\//, "", fname)
-      print $1 "  " star fname
-    }'
-  }
-
-  sha_check="$sha"
-  if grep -q '/' "$tmp_dir/$sha"; then
-    normalize_sha < "$tmp_dir/$sha" > "$tmp_dir/${sha}.normalized"
-    sha_check="${sha}.normalized"
+  $SUDO install -m 0755 "$binary_path" "$VIBERUN_SERVER_PATH"
+  if [ "$VIBERUN_SERVER_PATH" != "/usr/local/bin/viberun-server" ]; then
+    $SUDO ln -sf "$VIBERUN_SERVER_PATH" "/usr/local/bin/viberun-server"
   fi
-
-  if command -v sha256sum >/dev/null 2>&1; then
-    (cd "$tmp_dir" && sha256sum -c "$sha_check")
-  elif command -v shasum >/dev/null 2>&1; then
-    (cd "$tmp_dir" && shasum -a 256 -c "$sha_check")
-  else
-    echo "sha256sum or shasum is required" >&2
-    exit 1
-  fi
-
-  if ! need_cmd tar; then
-    echo "tar is required" >&2
-    exit 1
-  fi
-  tar -xzf "$tmp_dir/$asset" -C "$tmp_dir"
-  binary_path="$tmp_dir/viberun-server-${os}-${arch}"
-  if [ ! -f "$binary_path" ]; then
-    echo "missing extracted binary: viberun-server-${os}-${arch}" >&2
-    exit 1
-  fi
-fi
-
-$SUDO install -m 0755 "$binary_path" "$VIBERUN_SERVER_PATH"
-if [ "$VIBERUN_SERVER_PATH" != "/usr/local/bin/viberun-server" ]; then
-  $SUDO ln -sf "$VIBERUN_SERVER_PATH" "/usr/local/bin/viberun-server"
 fi
 `
 }
@@ -2579,6 +2842,17 @@ func promptYesNoDefaultYes(prompt string) bool {
 	return input == "" || input == "y" || input == "yes"
 }
 
+func promptYesNoDefaultNo(prompt string) bool {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Fprint(os.Stdout, prompt)
+	input, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return false
+	}
+	input = strings.TrimSpace(strings.ToLower(input))
+	return input == "y" || input == "yes"
+}
+
 func promptCreateLocal(app string) bool {
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Fprintf(os.Stdout, "App %s does not exist. Create? [Y/n]: ", app)
@@ -2721,10 +2995,20 @@ func stageLocalDockerImage(host string, tag string, dockerfile string) error {
 	if err := buildCmd.Run(); err != nil {
 		return err
 	}
+	if strings.TrimSpace(tag) != "" {
+		localID, err := localDockerImageID(tag)
+		if err == nil && localID != "" {
+			if remoteID, err := remoteDockerImageID(host, tag); err == nil && remoteID == localID {
+				fmt.Fprintf(os.Stdout, "Remote image %s is already up to date; skipping upload.\n", tag)
+				return nil
+			}
+		}
+	}
 	sshArgs := sshcmd.BuildArgs(host, []string{"docker", "load"}, false)
 	loadCmd := exec.Command("ssh", sshArgs...)
 	loadCmd.Env = normalizedSshEnv()
-	loadCmd.Stdout = os.Stdout
+	loadOutput := newLoadOutputStyler(os.Stdout)
+	loadCmd.Stdout = loadOutput
 	loadCmd.Stderr = os.Stderr
 	loadIn, err := loadCmd.StdinPipe()
 	if err != nil {
@@ -2744,9 +3028,46 @@ func stageLocalDockerImage(host string, tag string, dockerfile string) error {
 	}
 	_ = loadIn.Close()
 	if err := loadCmd.Wait(); err != nil {
+		_ = loadOutput.Flush()
+		return err
+	}
+	if err := loadOutput.Flush(); err != nil {
 		return err
 	}
 	return nil
+}
+
+func localDockerImageID(tag string) (string, error) {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return "", nil
+	}
+	cmd := exec.Command("docker", "image", "inspect", "-f", "{{.Id}}", tag)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func remoteDockerImageID(host string, tag string) (string, error) {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return "", nil
+	}
+	sshArgs := sshcmd.BuildArgs(host, []string{"docker", "image", "inspect", "-f", "{{.Id}}", tag}, false)
+	sshArgs = append([]string{"-o", "LogLevel=ERROR"}, sshArgs...)
+	cmd := exec.Command("ssh", sshArgs...)
+	cmd.Env = normalizedSshEnv()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		trimmed := strings.TrimSpace(string(output))
+		if trimmed == "" {
+			return "", err
+		}
+		return "", fmt.Errorf("%s", trimmed)
+	}
+	return strings.TrimSpace(string(output)), nil
 }
 
 func tagRemoteImage(host string, source string, target string) error {

@@ -104,8 +104,12 @@ jobs:
       - name: Build
         run: |
           mkdir -p dist
+          VERSION=nightly-${GITHUB_SHA::7}
+          COMMIT=${GITHUB_SHA}
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-            go build -o dist/${{ matrix.asset }} ./cmd/viberun-server
+            go build -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
+            -o dist/${{ matrix.asset }} ./cmd/viberun-server
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -127,6 +131,16 @@ jobs:
         with:
           path: dist/raw
           merge-multiple: true
+      - name: Verify binary versions match
+        run: |
+          set -euo pipefail
+          chmod +x dist/raw/viberun-linux-amd64 dist/raw/viberun-server-linux-amd64
+          client_version="$(dist/raw/viberun-linux-amd64 --version)"
+          server_version="$(dist/raw/viberun-server-linux-amd64 version)"
+          if [ "$client_version" != "$server_version" ]; then
+            echo "version mismatch: viberun=$client_version viberun-server=$server_version" >&2
+            exit 1
+          fi
       - name: Package tarballs + checksums
         run: |
           mkdir -p dist/release
