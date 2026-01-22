@@ -348,7 +348,15 @@ func (m shellModel) View() string {
 }
 
 func (m *shellModel) appendCommandLine(line string) {
-	m.state.appendOutput(renderPromptPrefix(m.state) + line)
+	prefix := renderPromptPrefix(m.state)
+	if len(m.state.output) > 0 {
+		lastLine := m.state.output[len(m.state.output)-1]
+		if lastLine != "" && lastLine != prefix {
+			// Preserve the visual blank line that was shown before the prompt.
+			m.state.appendOutput("")
+		}
+	}
+	m.state.appendOutput(prefix + line)
 }
 
 func (m *shellModel) historyPrev() {
