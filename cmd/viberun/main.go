@@ -108,9 +108,8 @@ func newSilentError(err error) error {
 }
 
 var (
-	version   = "dev"
-	commit    = ""
-	buildDate = ""
+	version = "dev"
+	commit  = ""
 )
 
 var devServerSync = struct {
@@ -2090,9 +2089,6 @@ func versionString() string {
 	extra := []string{}
 	if strings.TrimSpace(commit) != "" {
 		extra = append(extra, strings.TrimSpace(commit))
-	}
-	if strings.TrimSpace(buildDate) != "" {
-		extra = append(extra, strings.TrimSpace(buildDate))
 	}
 	if len(extra) == 0 {
 		return trimmed
