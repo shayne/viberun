@@ -51,7 +51,7 @@ func TestGatewayClipboardUpload(t *testing.T) {
 		t.Fatalf("check container: %v", err)
 	}
 	if !exists {
-		t.Skipf("container for %q does not exist; run `viberun %s shell` once to create it", resolved.App, resolved.App)
+		t.Skipf("container for %q does not exist; run `viberun` and `vibe %s` once to create it", resolved.App, resolved.App)
 	}
 
 	payload := make([]byte, 64*1024)

@@ -47,18 +47,18 @@ func TestSplitShellArgsUnterminated(t *testing.T) {
 }
 
 func TestParseShellCommandLowercase(t *testing.T) {
-	cmd, err := parseShellCommand("RuN MyApp")
+	cmd, err := parseShellCommand("ViBe MyApp")
 	if err != nil {
 		t.Fatalf("parseShellCommand returned error: %v", err)
 	}
-	if cmd.name != "run" {
-		t.Fatalf("expected name 'run', got %q", cmd.name)
+	if cmd.name != "vibe" {
+		t.Fatalf("expected name 'vibe', got %q", cmd.name)
 	}
 	if len(cmd.args) != 1 || cmd.args[0] != "MyApp" {
 		t.Fatalf("unexpected args: %v", cmd.args)
 	}
 	if cmd.enforceExisting {
-		t.Fatalf("expected enforceExisting=false for parsed run command")
+		t.Fatalf("expected enforceExisting=false for parsed vibe command")
 	}
 }
 
@@ -119,7 +119,7 @@ func TestDispatchRejectsUnknownApp(t *testing.T) {
 	state := &shellState{
 		scope:      scopeGlobal,
 		appsLoaded: true,
-		apps:       []string{"known"},
+		apps:       []appSummary{{Name: "known"}},
 	}
 	result, cmd := dispatchShellCommand(state, "app missing")
 	if cmd != nil {
@@ -135,7 +135,7 @@ func TestDispatchPendingCDUsesAppValidation(t *testing.T) {
 	state := &shellState{
 		scope:      scopeGlobal,
 		appsLoaded: true,
-		apps:       []string{"myapp"},
+		apps:       []appSummary{{Name: "myapp"}},
 	}
 	pending := &pendingCommand{cmd: parsedCommand{name: "cd", args: []string{"myapp"}}, scope: scopeGlobal}
 	result, cmd := dispatchCommandWithScope(state, pending)
@@ -191,13 +191,13 @@ func TestRunDotSlashRequiresExisting(t *testing.T) {
 	state := &shellState{
 		scope:      scopeGlobal,
 		appsLoaded: true,
-		apps:       []string{"known"},
+		apps:       []appSummary{{Name: "known"}},
 	}
 	result, cmd := dispatchShellCommand(state, "./missing")
 	if cmd != nil {
 		t.Fatalf("expected no command for missing app")
 	}
-	if result == "" || !strings.Contains(result, "Run `run missing` to create it") {
+	if result == "" || !strings.Contains(result, "Run `vibe missing` to create it") {
 		t.Fatalf("unexpected error output: %q", result)
 	}
 }

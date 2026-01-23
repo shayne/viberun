@@ -32,6 +32,10 @@ type ShellTheme struct {
 	StatusConnected  lipgloss.Style
 	StatusConnecting lipgloss.Style
 	StatusFailed     lipgloss.Style
+	StatusRunning    lipgloss.Style
+	StatusStopped    lipgloss.Style
+	StatusUnknown    lipgloss.Style
+	StatusUnavailable lipgloss.Style
 }
 
 func shellTheme() ShellTheme {
@@ -75,6 +79,10 @@ func newShellTheme(enabled bool) ShellTheme {
 		StatusConnected:  lipgloss.NewStyle().Foreground(lipgloss.Color("77")),
 		StatusConnecting: lipgloss.NewStyle().Foreground(lipgloss.Color("226")),
 		StatusFailed:     lipgloss.NewStyle().Foreground(lipgloss.Color("203")),
+		StatusRunning:    lipgloss.NewStyle().Foreground(lipgloss.Color("77")),
+		StatusStopped:    muted,
+		StatusUnknown:    lipgloss.NewStyle().Foreground(lipgloss.Color("214")),
+		StatusUnavailable: lipgloss.NewStyle().Foreground(lipgloss.Color("203")),
 	}
 }
 

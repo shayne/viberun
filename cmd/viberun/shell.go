@@ -36,10 +36,34 @@ type setupAction struct {
 	host string
 }
 
+type appStatus string
+
+const (
+	appStatusRunning appStatus = "running"
+	appStatusStopped appStatus = "stopped"
+	appStatusUnknown appStatus = "unknown"
+)
+
+type appSummary struct {
+	Name       string
+	Status     appStatus
+	LocalURL   string
+	PublicURL  string
+	Port       int
+	Forwarded  bool
+	ForwardErr string
+}
+
+type appForward struct {
+	port  int
+	close func()
+	err   error
+}
+
 type shellActionKind int
 
 const (
-	actionRun shellActionKind = iota
+	actionVibe shellActionKind = iota
 	actionShell
 	actionDelete
 	actionProxySetup
@@ -64,7 +88,7 @@ type shellState struct {
 	scope             shellScope
 	app               string
 	prevApp           string
-	apps              []string
+	apps              []appSummary
 	appsLoaded        bool
 	appsSyncing       bool
 	appsRenderPending bool
@@ -81,12 +105,16 @@ type shellState struct {
 	setupNeeded       bool
 	setupHinted       bool
 	hostPrompt        bool
+	startupActive     bool
+	startupStage      string
 	setupAction       *setupAction
 	shellAction       *shellAction
 	quit              bool
 	devMode           bool
 	gateway           *gatewayClient
 	gatewayHost       string
+	appForwards       map[string]appForward
+	appsStream        *appsStream
 }
 
 func runShell() error {
@@ -172,6 +200,7 @@ func newShellState() (*shellState, error) {
 		connState:    connUnknown,
 		devMode:      isDevMode(),
 		bootstrapped: false,
+		appForwards:  map[string]appForward{},
 	}
 	state.host = strings.TrimSpace(cfg.DefaultHost)
 	state.agent = strings.TrimSpace(cfg.AgentProvider)

@@ -31,7 +31,7 @@ type commandResultMsg struct {
 type hostSyncMsg struct {
 	reachable    bool
 	bootstrapped bool
-	apps         []string
+	apps         []appSummary
 	gateway      *gatewayClient
 	gatewayHost  string
 	err          error
@@ -49,10 +49,39 @@ type interactivePreparedMsg struct {
 }
 
 type appsLoadedMsg struct {
-	apps        []string
+	apps        []appSummary
 	render      bool
 	err         error
 	fromAppsCmd bool
+}
+
+type startupConnectMsg struct {
+	reachable    bool
+	bootstrapped bool
+	gateway      *gatewayClient
+	gatewayHost  string
+	err          error
+}
+
+type startupAppsMsg struct {
+	apps         []appSnapshot
+	proxyEnabled bool
+	err          error
+}
+
+type startupReadyMsg struct {
+	apps []appSummary
+	err  error
+}
+
+type appsStreamStartedMsg struct {
+	stream *appsStream
+	err    error
+}
+
+type appsStreamUpdateMsg struct {
+	apps []appSnapshot
+	err  error
 }
 
 func newShellModel(state *shellState) shellModel {
@@ -72,13 +101,15 @@ func newShellModel(state *shellState) shellModel {
 		promptSpin: spin,
 	}
 	if len(state.output) == 0 {
-		model.state.appendOutput(renderBanner(state))
-		if state.setupNeeded {
+		if state.hostPrompt {
+			model.state.appendOutput(renderSetupBanner())
 			model.state.setupHinted = true
 		}
 	}
 	if state.connState == connUnknown && !state.hostPrompt {
 		model.state.connState = connConnecting
+		model.state.startupActive = true
+		model.state.startupStage = fmt.Sprintf("Connecting to %s...", hostLabel(state.host))
 	}
 	return model
 }
@@ -89,7 +120,7 @@ func (m shellModel) Init() tea.Cmd {
 		m.state.appsLoaded = false
 		m.state.apps = nil
 		m.state.syncing = true
-		cmds = append(cmds, syncHostCmd(m.state))
+		cmds = append(cmds, startupConnectCmd(m.state))
 	}
 	return tea.Batch(cmds...)
 }
@@ -117,6 +148,9 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.busy {
+			return m, nil
+		}
+		if m.state.startupActive {
 			return m, nil
 		}
 		switch msg.Type {
@@ -177,6 +211,82 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state.appendOutput(fmt.Sprintf("error: %v", msg.err))
 		}
 		return m, nil
+	case startupConnectMsg:
+		m.busy = false
+		if msg.gateway != nil {
+			closeShellGateway(m.state)
+			m.state.gateway = msg.gateway
+			m.state.gatewayHost = msg.gatewayHost
+		} else if msg.err != nil || !msg.bootstrapped {
+			closeShellGateway(m.state)
+		}
+		if msg.err != nil {
+			m.state.connState = connFailed
+			m.state.connError = msg.err.Error()
+			m.state.bootstrapped = false
+			m.state.appsLoaded = false
+			m.state.apps = nil
+			m.state.startupActive = false
+			m.state.startupStage = ""
+			m.state.appendOutput(fmt.Sprintf("Host check failed: %v", msg.err))
+			m.state.pendingCmd = nil
+			return m, nil
+		}
+		if !msg.reachable {
+			m.state.connState = connFailed
+			m.state.connError = "unreachable"
+			m.state.bootstrapped = false
+			m.state.appsLoaded = false
+			m.state.apps = nil
+			m.state.startupActive = false
+			m.state.startupStage = ""
+			m.state.appendOutput("Host unreachable.")
+			m.state.pendingCmd = nil
+			return m, nil
+		}
+		m.state.connState = connConnected
+		m.state.connError = ""
+		m.state.bootstrapped = msg.bootstrapped
+		if !msg.bootstrapped {
+			m.state.setupNeeded = true
+			m.state.appsLoaded = false
+			m.state.appsSyncing = false
+			m.state.apps = nil
+			m.state.pendingCmd = nil
+			m.state.startupActive = false
+			m.state.startupStage = ""
+			if !m.state.setupHinted {
+				m.state.appendOutput(renderSetupBanner())
+				m.state.setupHinted = true
+			}
+			return m, nil
+		}
+		m.state.setupNeeded = false
+		m.state.startupStage = "Syncing apps..."
+		return m, startupAppsCmd(m.state)
+	case startupAppsMsg:
+		if msg.err != nil {
+			m.state.startupActive = false
+			m.state.startupStage = ""
+			m.state.syncing = false
+			m.state.appendOutput(fmt.Sprintf("error: %v", msg.err))
+			return m, nil
+		}
+		m.state.startupStage = "Forwarding app ports..."
+		return m, startupForwardCmd(m.state, msg.apps, msg.proxyEnabled)
+	case startupReadyMsg:
+		m.state.startupActive = false
+		m.state.startupStage = ""
+		m.state.syncing = false
+		if msg.err != nil {
+			m.state.appendOutput(fmt.Sprintf("error: %v", msg.err))
+			return m, nil
+		}
+		m.state.apps = applyAppSummaries(m.state, msg.apps)
+		m.state.appsLoaded = true
+		m.state.appsSyncing = false
+		m.state.appendOutput(renderStartupSummary(m.state))
+		return m, startAppsStreamCmd(m.state)
 	case hostSyncMsg:
 		m.state.syncing = false
 		m.busy = false
@@ -223,7 +333,7 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.state.setupNeeded = false
-		m.state.apps = msg.apps
+		m.state.apps = applyAppSummaries(m.state, msg.apps)
 		m.state.appsLoaded = true
 		m.state.appsSyncing = false
 		if m.state.pendingCmd != nil {
@@ -238,7 +348,7 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state.appendOutput(result)
 			}
 		}
-		return m, nil
+		return m, startAppsStreamCmd(m.state)
 	case shellActionMsg:
 		m.state.shellAction = &msg.action
 		m.busy = false
@@ -259,6 +369,25 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.state.preparedSession = msg.session
 		return m, tea.Quit
+	case appsStreamStartedMsg:
+		if msg.err != nil {
+			m.state.appendOutput(fmt.Sprintf("error: %v", msg.err))
+			return m, nil
+		}
+		m.state.appsStream = msg.stream
+		return m, listenAppsStreamCmd(msg.stream)
+	case appsStreamUpdateMsg:
+		if msg.err != nil {
+			if m.state.appsStream != nil {
+				if m.state.appsStream.close != nil {
+					m.state.appsStream.close()
+				}
+				m.state.appsStream = nil
+			}
+			return m, nil
+		}
+		m.state.appsSyncing = true
+		return m, refreshAppsFromStreamCmd(m.state, msg.apps)
 	case appsLoadedMsg:
 		m.state.appsSyncing = false
 		m.busy = false
@@ -276,7 +405,7 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state.appsRenderPending = false
 			return m, nil
 		}
-		m.state.apps = msg.apps
+		m.state.apps = applyAppSummaries(m.state, msg.apps)
 		m.state.appsLoaded = true
 		if msg.render || m.state.appsRenderPending {
 			m.state.appendOutput(renderAppsList(m.state))
@@ -304,6 +433,9 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m shellModel) View() string {
 	header := renderHeader(m.state)
+	if m.state.startupActive {
+		return header + "\n" + renderStartupLine(m)
+	}
 	outputLines := m.state.output
 	availableHeight := m.height - countLines(header) - 1
 	if availableHeight < 0 {
@@ -386,15 +518,15 @@ func renderBanner(state *shellState) string {
 	if state != nil && state.setupNeeded {
 		return renderSetupBanner()
 	}
-	return renderRunBanner()
+	return renderVibeBanner()
 }
 
-func renderRunBanner() string {
+func renderVibeBanner() string {
 	theme := shellTheme()
 	if !theme.Enabled {
-		return "\n- run appname to start building • help\n"
+		return "\n- vibe appname to start building • help\n"
 	}
-	return fmt.Sprintf("\n- %s %s to start building • %s\n", theme.BannerVerb.Render("run"), theme.BannerApp.Render("appname"), theme.BannerHelp.Render("help"))
+	return fmt.Sprintf("\n- %s %s to start building • %s\n", theme.BannerVerb.Render("vibe"), theme.BannerApp.Render("appname"), theme.BannerHelp.Render("help"))
 }
 
 func renderSetupBanner() string {
@@ -409,9 +541,9 @@ func renderSetupBanner() string {
 func renderFirstAppHint() string {
 	theme := shellTheme()
 	if !theme.Enabled {
-		return "Create your first app: run myapp"
+		return "Create your first app: vibe myapp"
 	}
-	return fmt.Sprintf("Create your first app: %s %s", theme.BannerVerb.Render("run"), theme.BannerApp.Render("myapp"))
+	return fmt.Sprintf("Create your first app: %s %s", theme.BannerVerb.Render("vibe"), theme.BannerApp.Render("myapp"))
 }
 
 func renderHeader(state *shellState) string {
@@ -473,6 +605,26 @@ func renderPrompt(m shellModel) string {
 
 func renderLoadingLine(m shellModel) string {
 	return m.promptSpin.View()
+}
+
+func renderStartupLine(m shellModel) string {
+	stage := strings.TrimSpace(m.state.startupStage)
+	if stage == "" {
+		stage = "Working..."
+	}
+	theme := shellTheme()
+	if !theme.Enabled {
+		return fmt.Sprintf("%s %s", m.promptSpin.View(), stage)
+	}
+	return fmt.Sprintf("%s %s", theme.StatusConnecting.Render(m.promptSpin.View()), theme.Muted.Render(stage))
+}
+
+func hostLabel(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return "your server"
+	}
+	return host
 }
 
 func renderPromptPrefix(state *shellState) string {

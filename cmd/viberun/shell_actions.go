@@ -31,7 +31,7 @@ type preparedSession struct {
 
 func runShellAction(state *shellState, action shellAction) error {
 	switch action.kind {
-	case actionRun:
+	case actionVibe:
 		return runShellInteractive(state, action.app, "")
 	case actionShell:
 		return runShellInteractive(state, action.app, "shell")
@@ -139,34 +139,7 @@ func prepareInteractiveSession(state *shellState, appArg string, action string) 
 		sessionEnv["VIBERUN_USER_CONFIG"] = encoded
 	}
 
-	var forwardClose func()
-	cleanupForward := func() {
-		if forwardClose != nil {
-			forwardClose()
-			forwardClose = nil
-		}
-	}
-	finalCleanup := func() {
-		cleanupForward()
-		cleanupGateway()
-	}
-
-	if !isLocalHost(resolved.Host) {
-		hostPort, err := resolveHostPort(gateway, resolved.App, agentProvider)
-		if err != nil {
-			finalCleanup()
-			return nil, false, err
-		}
-		if err := ensureLocalPortAvailable(hostPort); err != nil {
-			finalCleanup()
-			return nil, false, err
-		}
-		forwardClose, err = startLocalForwardMux(gateway, hostPort)
-		if err != nil {
-			finalCleanup()
-			return nil, false, err
-		}
-	}
+	finalCleanup := cleanupGateway
 
 	if err := gateway.startOpenStream(func(url string) {
 		if err := openURL(url); err != nil {
@@ -294,28 +267,6 @@ func runShellInteractive(state *shellState, appArg string, action string) error 
 		fmt.Fprintf(os.Stderr, "failed to encode user config: %v\n", err)
 	} else if encoded != "" {
 		sessionEnv["VIBERUN_USER_CONFIG"] = encoded
-	}
-
-	var forwardClose func()
-	cleanupForward := func() {
-		if forwardClose != nil {
-			forwardClose()
-			forwardClose = nil
-		}
-	}
-	defer cleanupForward()
-	if !isLocalHost(resolved.Host) {
-		hostPort, err := resolveHostPort(gateway, resolved.App, agentProvider)
-		if err != nil {
-			return err
-		}
-		if err := ensureLocalPortAvailable(hostPort); err != nil {
-			return err
-		}
-		forwardClose, err = startLocalForwardMux(gateway, hostPort)
-		if err != nil {
-			return err
-		}
 	}
 
 	if err := gateway.startOpenStream(func(url string) {
