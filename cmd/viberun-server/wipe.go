@@ -17,7 +17,7 @@ import (
 
 func handleWipeCommand() error {
 	if os.Geteuid() != 0 {
-		return fmt.Errorf("viberun-server must run as root; run via sudo or re-run bootstrap")
+		return fmt.Errorf("viberun-server must run as root; run via sudo or rerun setup")
 	}
 	caddyName := proxy.DefaultCaddyContainer()
 	if cfg, _, err := proxy.LoadConfig(); err == nil {

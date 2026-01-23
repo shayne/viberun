@@ -47,18 +47,31 @@ func TestSplitShellArgsUnterminated(t *testing.T) {
 }
 
 func TestParseShellCommandLowercase(t *testing.T) {
-	cmd, err := parseShellCommand("RuN MyApp")
+	cmd, err := parseShellCommand("ViBe MyApp")
 	if err != nil {
 		t.Fatalf("parseShellCommand returned error: %v", err)
 	}
-	if cmd.name != "run" {
-		t.Fatalf("expected name 'run', got %q", cmd.name)
+	if cmd.name != "vibe" {
+		t.Fatalf("expected name 'vibe', got %q", cmd.name)
 	}
 	if len(cmd.args) != 1 || cmd.args[0] != "MyApp" {
 		t.Fatalf("unexpected args: %v", cmd.args)
 	}
 	if cmd.enforceExisting {
-		t.Fatalf("expected enforceExisting=false for parsed run command")
+		t.Fatalf("expected enforceExisting=false for parsed vibe command")
+	}
+}
+
+func TestParseShellCommandPreservesUnknownCase(t *testing.T) {
+	cmd, err := parseShellCommand("MyApp")
+	if err != nil {
+		t.Fatalf("parseShellCommand returned error: %v", err)
+	}
+	if cmd.name != "MyApp" {
+		t.Fatalf("expected name 'MyApp', got %q", cmd.name)
+	}
+	if len(cmd.args) != 0 {
+		t.Fatalf("unexpected args: %v", cmd.args)
 	}
 }
 
@@ -79,6 +92,31 @@ func TestDispatchDefersRemoteCommandUntilSync(t *testing.T) {
 	}
 	if state.pendingCmd.cmd.name != "apps" {
 		t.Fatalf("expected pending apps command, got %q", state.pendingCmd.cmd.name)
+	}
+}
+
+func TestDispatchAutoVibeForBareAppName(t *testing.T) {
+	state := &shellState{
+		scope:       scopeGlobal,
+		host:        "root@host",
+		setupNeeded: false,
+		hostPrompt:  false,
+	}
+	result, cmd := dispatchShellCommand(state, "myapp")
+	if result != "" {
+		t.Fatalf("expected no immediate output, got %q", result)
+	}
+	if cmd == nil {
+		t.Fatalf("expected sync command for bare app name")
+	}
+	if state.pendingCmd == nil {
+		t.Fatalf("expected pending command to be queued")
+	}
+	if state.pendingCmd.cmd.name != "vibe" {
+		t.Fatalf("expected pending command name 'vibe', got %q", state.pendingCmd.cmd.name)
+	}
+	if len(state.pendingCmd.cmd.args) != 1 || state.pendingCmd.cmd.args[0] != "myapp" {
+		t.Fatalf("unexpected pending args: %v", state.pendingCmd.cmd.args)
 	}
 }
 
@@ -119,7 +157,7 @@ func TestDispatchRejectsUnknownApp(t *testing.T) {
 	state := &shellState{
 		scope:      scopeGlobal,
 		appsLoaded: true,
-		apps:       []string{"known"},
+		apps:       []appSummary{{Name: "known"}},
 	}
 	result, cmd := dispatchShellCommand(state, "app missing")
 	if cmd != nil {
@@ -135,7 +173,7 @@ func TestDispatchPendingCDUsesAppValidation(t *testing.T) {
 	state := &shellState{
 		scope:      scopeGlobal,
 		appsLoaded: true,
-		apps:       []string{"myapp"},
+		apps:       []appSummary{{Name: "myapp"}},
 	}
 	pending := &pendingCommand{cmd: parsedCommand{name: "cd", args: []string{"myapp"}}, scope: scopeGlobal}
 	result, cmd := dispatchCommandWithScope(state, pending)
@@ -191,13 +229,13 @@ func TestRunDotSlashRequiresExisting(t *testing.T) {
 	state := &shellState{
 		scope:      scopeGlobal,
 		appsLoaded: true,
-		apps:       []string{"known"},
+		apps:       []appSummary{{Name: "known"}},
 	}
 	result, cmd := dispatchShellCommand(state, "./missing")
 	if cmd != nil {
 		t.Fatalf("expected no command for missing app")
 	}
-	if result == "" || !strings.Contains(result, "Run `run missing` to create it") {
+	if result == "" || !strings.Contains(result, "Run `vibe missing` to create it") {
 		t.Fatalf("unexpected error output: %q", result)
 	}
 }

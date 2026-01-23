@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/shayne/viberun/internal/mux"
 	"github.com/shayne/viberun/internal/muxrpc"
+	"github.com/shayne/viberun/internal/server"
 )
 
 type gatewayServer struct {
@@ -105,6 +107,52 @@ func (s *gatewayServer) handleOpenStream(stream *mux.Stream, _ mux.StreamOpen) {
 	}()
 }
 
+func (s *gatewayServer) handleAppsStream(stream *mux.Stream, _ mux.StreamOpen) {
+	done := make(chan struct{})
+	go func() {
+		for {
+			if _, err := stream.ReceiveMsg(); err != nil {
+				close(done)
+				return
+			}
+		}
+	}()
+	var lastPayload []byte
+	sendSnapshot := func() bool {
+		snapshots, err := loadAppSnapshots()
+		if err != nil {
+			return true
+		}
+		payload, err := json.Marshal(muxrpc.AppsEvent{Apps: snapshots})
+		if err != nil {
+			return true
+		}
+		if bytes.Equal(payload, lastPayload) {
+			return true
+		}
+		lastPayload = payload
+		if err := stream.SendMsg(payload); err != nil {
+			return false
+		}
+		return true
+	}
+	if !sendSnapshot() {
+		return
+	}
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			if !sendSnapshot() {
+				return
+			}
+		}
+	}
+}
+
 func (s *gatewayServer) sendOpenEvent(url string) {
 	s.openMu.Lock()
 	stream := s.openStream
@@ -114,6 +162,35 @@ func (s *gatewayServer) sendOpenEvent(url string) {
 	}
 	payload, _ := json.Marshal(muxrpc.OpenEvent{URL: url})
 	_ = stream.SendMsg(payload)
+}
+
+func loadAppSnapshots() ([]muxrpc.AppSnapshot, error) {
+	state, statePath, err := server.LoadState()
+	if err != nil {
+		return nil, err
+	}
+	stateDirty := false
+	if synced, err := syncPortsFromContainers(&state); err != nil {
+		return nil, fmt.Errorf("failed to sync port mappings: %w", err)
+	} else if synced {
+		stateDirty = true
+	}
+	if err := persistState(statePath, &state, &stateDirty); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(state.Ports))
+	for name := range state.Ports {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	snapshots := make([]muxrpc.AppSnapshot, 0, len(names))
+	for _, name := range names {
+		snapshots = append(snapshots, muxrpc.AppSnapshot{Name: name, Port: state.Ports[name]})
+	}
+	return snapshots, nil
 }
 
 func (s *gatewayServer) handlePtyStream(stream *mux.Stream, open mux.StreamOpen) {
@@ -214,6 +291,7 @@ func runGateway(agent string) error {
 	m := mux.New(conn, false)
 	m.Handle("control", server.handleControlStream)
 	m.Handle("open", server.handleOpenStream)
+	m.Handle("apps", server.handleAppsStream)
 	m.Handle("pty", server.handlePtyStream)
 	m.Handle("forward", server.handleForwardStream)
 	m.Handle("upload", server.handleUploadStream)

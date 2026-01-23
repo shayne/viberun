@@ -12,7 +12,24 @@ import (
 )
 
 func closeShellGateway(state *shellState) {
-	if state == nil || state.gateway == nil {
+	if state == nil {
+		return
+	}
+	if state.appsStream != nil {
+		if state.appsStream.close != nil {
+			state.appsStream.close()
+		}
+		state.appsStream = nil
+	}
+	if state.appForwards != nil {
+		for name, forward := range state.appForwards {
+			if forward.close != nil {
+				forward.close()
+			}
+			delete(state.appForwards, name)
+		}
+	}
+	if state.gateway == nil {
 		return
 	}
 	_ = state.gateway.Close()

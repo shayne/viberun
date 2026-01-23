@@ -176,7 +176,7 @@ func ensureBtrfsTools() error {
 	required := []string{"btrfs", "mkfs.btrfs", "losetup", "mount", "umount"}
 	for _, name := range required {
 		if _, err := exec.LookPath(name); err != nil {
-			return fmt.Errorf("missing %s on host; rerun bootstrap to install btrfs-progs", name)
+			return fmt.Errorf("missing %s on host; rerun setup to install btrfs-progs", name)
 		}
 	}
 	return nil
@@ -187,7 +187,7 @@ func ensureAclTools() error {
 		return fmt.Errorf("viberun-server must run as root; re-run with sudo")
 	}
 	if _, err := exec.LookPath("setfacl"); err != nil {
-		return fmt.Errorf("missing setfacl on host; rerun bootstrap to install acl")
+		return fmt.Errorf("missing setfacl on host; rerun setup to install acl")
 	}
 	return nil
 }

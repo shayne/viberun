@@ -15,7 +15,6 @@ import (
 
 	"github.com/shayne/viberun/internal/agents"
 	"github.com/shayne/viberun/internal/config"
-	"github.com/shayne/viberun/internal/mux"
 	"github.com/shayne/viberun/internal/muxrpc"
 	"github.com/shayne/viberun/internal/target"
 	"github.com/shayne/viberun/internal/tui"
@@ -24,17 +23,17 @@ import (
 type preparedSession struct {
 	resolved   target.Resolved
 	gateway    *gatewayClient
-	stream     *mux.Stream
+	ptyMeta    muxrpc.PtyMeta
 	cleanup    func()
 	outputTail *tailBuffer
 }
 
 func runShellAction(state *shellState, action shellAction) error {
 	switch action.kind {
-	case actionRun:
-		return runShellInteractive(state, action.app, "")
+	case actionVibe:
+		return runShellAttachSubprocess(state, action.app, "")
 	case actionShell:
-		return runShellInteractive(state, action.app, "shell")
+		return runShellAttachSubprocess(state, action.app, "shell")
 	case actionDelete:
 		return runShellDelete(state, action.app)
 	case actionProxySetup:
@@ -54,6 +53,47 @@ func runShellAction(state *shellState, action shellAction) error {
 	}
 }
 
+func runShellAttachSubprocess(state *shellState, app string, action string) error {
+	args, err := buildAttachArgs(state, app, action)
+	if err != nil {
+		return err
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to resolve executable: %w", err)
+	}
+	cmd := exec.Command(exe, args...)
+	cmd.Env = os.Environ()
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	flushTerminalInputBuffer()
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func buildAttachArgs(state *shellState, app string, action string) ([]string, error) {
+	if strings.TrimSpace(app) == "" {
+		return nil, errors.New("app is required")
+	}
+	args := []string{"attach"}
+	if strings.TrimSpace(action) == "shell" {
+		args = append(args, "--shell")
+	}
+	if state != nil {
+		if host := strings.TrimSpace(state.host); host != "" {
+			args = append(args, "--host", host)
+		}
+		if agent := strings.TrimSpace(state.agent); agent != "" {
+			args = append(args, "--agent", agent)
+		}
+	}
+	args = append(args, app)
+	return args, nil
+}
+
 func runPreparedInteractive(state *shellState, session *preparedSession) error {
 	if session == nil {
 		return errors.New("missing prepared session")
@@ -61,11 +101,8 @@ func runPreparedInteractive(state *shellState, session *preparedSession) error {
 	if session.cleanup != nil {
 		defer session.cleanup()
 	}
-	if err := runInteractiveMuxSession(session.resolved, session.gateway, session.stream, session.outputTail); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			maybeClearDefaultAgentOnFailure(state.cfg, state.cfgPath, runFlags{}, session.resolved.App, session.outputTail.String())
-			return newSilentError(exitErr)
-		}
+	action := strings.TrimSpace(session.ptyMeta.Action)
+	if err := runShellAttachSubprocess(state, session.resolved.App, action); err != nil {
 		return err
 	}
 	return nil
@@ -83,7 +120,7 @@ func prepareInteractiveSession(state *shellState, appArg string, action string) 
 	if err != nil {
 		return nil, false, err
 	}
-	gateway, cleanup, err := gatewayForResolvedHost(state, resolved.Host)
+	gateway, cleanup, err := startAttachGateway(state, resolved.Host)
 	if err != nil {
 		return nil, false, err
 	}
@@ -120,11 +157,8 @@ func prepareInteractiveSession(state *shellState, appArg string, action string) 
 	agentProvider = agentSpec.Provider
 
 	sessionEnv := map[string]string{}
-	if colorTerm := strings.TrimSpace(os.Getenv("COLORTERM")); colorTerm != "" {
-		sessionEnv["COLORTERM"] = colorTerm
-	}
-	if termValue := strings.TrimSpace(os.Getenv("TERM")); termValue != "" {
-		sessionEnv["TERM"] = termValue
+	for key, value := range sessionTermEnv() {
+		sessionEnv[key] = value
 	}
 	if agentCheck := strings.TrimSpace(os.Getenv("VIBERUN_AGENT_CHECK")); agentCheck != "" {
 		sessionEnv["VIBERUN_AGENT_CHECK"] = agentCheck
@@ -139,62 +173,19 @@ func prepareInteractiveSession(state *shellState, appArg string, action string) 
 		sessionEnv["VIBERUN_USER_CONFIG"] = encoded
 	}
 
-	var forwardClose func()
-	cleanupForward := func() {
-		if forwardClose != nil {
-			forwardClose()
-			forwardClose = nil
-		}
-	}
-	finalCleanup := func() {
-		cleanupForward()
-		cleanupGateway()
-	}
-
-	if !isLocalHost(resolved.Host) {
-		hostPort, err := resolveHostPort(gateway, resolved.App, agentProvider)
-		if err != nil {
-			finalCleanup()
-			return nil, false, err
-		}
-		if err := ensureLocalPortAvailable(hostPort); err != nil {
-			finalCleanup()
-			return nil, false, err
-		}
-		forwardClose, err = startLocalForwardMux(gateway, hostPort)
-		if err != nil {
-			finalCleanup()
-			return nil, false, err
-		}
-	}
-
-	if err := gateway.startOpenStream(func(url string) {
-		if err := openURL(url); err != nil {
-			fmt.Fprintf(os.Stderr, "open url failed: %v\n", err)
-		}
-	}); err != nil {
-		finalCleanup()
-		return nil, false, err
-	}
-
 	ptyMeta := muxrpc.PtyMeta{
 		App:    resolved.App,
 		Action: strings.TrimSpace(action),
 		Agent:  agentProvider,
 		Env:    sessionEnv,
 	}
-	ptyStream, err := gateway.openStream("pty", ptyMeta)
-	if err != nil {
-		finalCleanup()
-		return nil, false, err
-	}
 
 	outputTail := &tailBuffer{max: 32 * 1024}
 	return &preparedSession{
 		resolved:   resolved,
 		gateway:    gateway,
-		stream:     ptyStream,
-		cleanup:    finalCleanup,
+		ptyMeta:    ptyMeta,
+		cleanup:    cleanupGateway,
 		outputTail: outputTail,
 	}, false, nil
 }
@@ -211,7 +202,7 @@ func runShellInteractive(state *shellState, appArg string, action string) error 
 	if err != nil {
 		return err
 	}
-	gateway, cleanup, err := gatewayForResolvedHost(state, resolved.Host)
+	gateway, cleanup, err := startAttachGateway(state, resolved.Host)
 	if err != nil {
 		return err
 	}
@@ -224,11 +215,8 @@ func runShellInteractive(state *shellState, appArg string, action string) error 
 	}
 
 	sessionEnv := map[string]string{}
-	if colorTerm := strings.TrimSpace(os.Getenv("COLORTERM")); colorTerm != "" {
-		sessionEnv["COLORTERM"] = colorTerm
-	}
-	if termValue := strings.TrimSpace(os.Getenv("TERM")); termValue != "" {
-		sessionEnv["TERM"] = termValue
+	for key, value := range sessionTermEnv() {
+		sessionEnv[key] = value
 	}
 	if agentCheck := strings.TrimSpace(os.Getenv("VIBERUN_AGENT_CHECK")); agentCheck != "" {
 		sessionEnv["VIBERUN_AGENT_CHECK"] = agentCheck
@@ -296,50 +284,24 @@ func runShellInteractive(state *shellState, appArg string, action string) error 
 		sessionEnv["VIBERUN_USER_CONFIG"] = encoded
 	}
 
-	var forwardClose func()
-	cleanupForward := func() {
-		if forwardClose != nil {
-			forwardClose()
-			forwardClose = nil
-		}
-	}
-	defer cleanupForward()
-	if !isLocalHost(resolved.Host) {
-		hostPort, err := resolveHostPort(gateway, resolved.App, agentProvider)
-		if err != nil {
-			return err
-		}
-		if err := ensureLocalPortAvailable(hostPort); err != nil {
-			return err
-		}
-		forwardClose, err = startLocalForwardMux(gateway, hostPort)
-		if err != nil {
-			return err
-		}
-	}
-
-	if err := gateway.startOpenStream(func(url string) {
-		if err := openURL(url); err != nil {
-			fmt.Fprintf(os.Stderr, "open url failed: %v\n", err)
-		}
-	}); err != nil {
-		return err
-	}
 	ptyMeta := muxrpc.PtyMeta{
 		App:    resolved.App,
 		Action: strings.TrimSpace(action),
 		Agent:  agentProvider,
 		Env:    sessionEnv,
 	}
-	ptyStream, err := gateway.openStream("pty", ptyMeta)
-	if err != nil {
-		return err
-	}
 	var outputTail tailBuffer
 	outputTail.max = 32 * 1024
-	if err := runInteractiveMuxSession(resolved, gateway, ptyStream, &outputTail); err != nil {
+	attach := AttachSession{
+		Resolved:   resolved,
+		Gateway:    gateway,
+		PtyMeta:    ptyMeta,
+		OutputTail: &outputTail,
+		OpenURL:    openURL,
+	}
+	if err := attach.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			maybeClearDefaultAgentOnFailure(cfg, state.cfgPath, runFlags{}, resolved.App, outputTail.String())
+			maybeClearDefaultAgentOnFailure(cfg, state.cfgPath, "", resolved.App, outputTail.String())
 			return newSilentError(exitErr)
 		}
 		return err
@@ -565,6 +527,18 @@ func gatewayForResolvedHost(state *shellState, host string) (*gatewayClient, fun
 	return gateway, cleanup, nil
 }
 
+func startAttachGateway(state *shellState, host string) (*gatewayClient, func(), error) {
+	if strings.TrimSpace(host) == "" {
+		return nil, func() {}, errors.New("host is required")
+	}
+	gateway, err := startGateway(host, strings.TrimSpace(state.agent), nil, false)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	cleanup := func() { _ = gateway.Close() }
+	return gateway, cleanup, nil
+}
+
 func appendCommandOutput(state *shellState, output string) {
 	if state == nil {
 		return
@@ -575,4 +549,21 @@ func appendCommandOutput(state *shellState, output string) {
 		return
 	}
 	state.appendOutput(trimmed)
+}
+
+func sessionTermEnv() map[string]string {
+	env := map[string]string{}
+	termValue := strings.TrimSpace(os.Getenv("TERM"))
+	if termValue == "" {
+		termValue = "xterm-256color"
+	}
+	switch strings.ToLower(termValue) {
+	case "xterm-ghostty", "ghostty", "xterm-kitty", "kitty", "wezterm", "alacritty", "foot", "dumb":
+		termValue = "xterm-256color"
+	}
+	env["TERM"] = termValue
+	if colorTerm := strings.TrimSpace(os.Getenv("COLORTERM")); colorTerm != "" {
+		env["COLORTERM"] = colorTerm
+	}
+	return env
 }

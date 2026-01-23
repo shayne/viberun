@@ -72,3 +72,12 @@ type ResizeEvent struct {
 	Rows int `json:"rows"`
 	Cols int `json:"cols"`
 }
+
+type AppSnapshot struct {
+	Name string `json:"name"`
+	Port int    `json:"port,omitempty"`
+}
+
+type AppsEvent struct {
+	Apps []AppSnapshot `json:"apps"`
+}

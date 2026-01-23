@@ -173,11 +173,11 @@ func main() {
 func runServer() error {
 	args := os.Args[1:]
 	if len(args) == 0 || hasHelpFlag(args) {
-		return newUsageError("Usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|update|shell|port|delete|exists] | viberun-server apps | viberun-server proxy setup --domain <domain> --public-ip <ip> | viberun-server proxy url <app> | viberun-server wipe")
+		return newUsageError("Usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|update|shell|port|status|delete|exists] | viberun-server apps | viberun-server proxy setup --domain <domain> --public-ip <ip> | viberun-server proxy url <app> | viberun-server wipe")
 	}
 	if args[0] == "proxy" {
 		if os.Geteuid() != 0 {
-			return fmt.Errorf("viberun-server must run as root; run via sudo or re-run bootstrap")
+			return fmt.Errorf("viberun-server must run as root; run via sudo or rerun setup")
 		}
 		if err := handleProxyCommand(args[1:]); err != nil {
 			return err
@@ -190,7 +190,7 @@ func runServer() error {
 			return err
 		}
 		if os.Geteuid() != 0 {
-			return fmt.Errorf("viberun-server must run as root; run via sudo or re-run bootstrap")
+			return fmt.Errorf("viberun-server must run as root; run via sudo or rerun setup")
 		}
 		if _, err := exec.LookPath("docker"); err != nil {
 			return fmt.Errorf("docker is required but was not found in PATH")
@@ -225,7 +225,7 @@ func runServer() error {
 	}
 
 	if len(result.Args) < 1 || len(result.Args) > 3 {
-		return newUsageError("Usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|update|shell|port|delete|exists] | viberun-server apps | viberun-server proxy setup --domain <domain> --public-ip <ip> | viberun-server proxy url <app> | viberun-server wipe")
+		return newUsageError("Usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|update|shell|port|status|delete|exists] | viberun-server apps | viberun-server proxy setup --domain <domain> --public-ip <ip> | viberun-server proxy url <app> | viberun-server wipe")
 	}
 	args = result.Args
 	app, err := proxy.NormalizeAppName(args[0])
@@ -254,7 +254,7 @@ func runServer() error {
 	agentArgs = tmuxSessionArgs(sessionName, agentLabel, agentArgs)
 
 	if os.Geteuid() != 0 {
-		return fmt.Errorf("viberun-server must run as root; run via sudo or re-run bootstrap")
+		return fmt.Errorf("viberun-server must run as root; run via sudo or rerun setup")
 	}
 	if _, err := exec.LookPath("docker"); err != nil {
 		return fmt.Errorf("docker is required but was not found in PATH")
@@ -337,6 +337,22 @@ func runServer() error {
 		fmt.Fprintf(os.Stdout, "Deleted app %s\n", app)
 		return nil
 	}
+	if action == "status" {
+		if !exists {
+			fmt.Fprintln(os.Stdout, "missing")
+			return nil
+		}
+		running, err := containerRunning(containerName)
+		if err != nil {
+			return fmt.Errorf("failed to inspect container: %w", err)
+		}
+		if running {
+			fmt.Fprintln(os.Stdout, "running")
+		} else {
+			fmt.Fprintln(os.Stdout, "stopped")
+		}
+		return nil
+	}
 
 	port, portDirty, err := resolvePort(&state, app, containerName, exists)
 	if err != nil {
@@ -371,7 +387,7 @@ func runServer() error {
 			ui.Step("Check image")
 			if _, err := exec.Command("docker", "image", "inspect", defaultImage).CombinedOutput(); err != nil {
 				ui.Fail("failed")
-				return fmt.Errorf("image %s not available; re-run bootstrap to stage it", defaultImage)
+				return fmt.Errorf("image %s not available; rerun setup to stage it", defaultImage)
 			}
 			ui.Done("")
 		} else {
@@ -567,6 +583,9 @@ func parseAction(args []string) (string, []string, error) {
 	if len(args) == 1 && args[0] == "port" {
 		return "port", nil, nil
 	}
+	if len(args) == 1 && args[0] == "status" {
+		return "status", nil, nil
+	}
 	if len(args) == 1 && args[0] == "exists" {
 		return "exists", nil, nil
 	}
@@ -576,7 +595,7 @@ func parseAction(args []string) (string, []string, error) {
 	if len(args) == 2 && args[0] == "restore" && strings.TrimSpace(args[1]) != "" {
 		return "restore", []string{strings.TrimSpace(args[1])}, nil
 	}
-	return "", nil, fmt.Errorf("usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|update|shell|port|delete|exists]")
+	return "", nil, fmt.Errorf("usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|update|shell|port|status|delete|exists]")
 }
 
 func hasHelpFlag(args []string) bool {
@@ -839,7 +858,7 @@ func dockerExec(name string, agentArgs []string, extraEnv map[string]string) err
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "warning: failed to inspect agent forwarding mount: %v\n", err)
 			} else if !mounted {
-				fmt.Fprintln(os.Stderr, "SSH agent forwarding isn't available in this container. Run `viberun --forward-agent <app> update` to enable it.")
+				fmt.Fprintln(os.Stderr, "SSH agent forwarding isn't available in this container. Start viberun with VIBERUN_FORWARD_AGENT=1, then run `app <app>` and `update` to enable it.")
 			} else {
 				env["SSH_AUTH_SOCK"] = socketPath
 				_ = runDockerCommandOutput("exec", name, "tmux", "set-environment", "-g", "SSH_AUTH_SOCK", socketPath)

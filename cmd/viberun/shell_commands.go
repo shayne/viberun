@@ -68,10 +68,10 @@ func normalizeCommand(cmd parsedCommand) parsedCommand {
 		if strings.HasPrefix(cmd.name, "./") {
 			app := strings.TrimPrefix(cmd.name, "./")
 			if app == "" {
-				return parsedCommand{name: "run", args: cmd.args}
+				return parsedCommand{name: "vibe", args: cmd.args}
 			}
 			return parsedCommand{
-				name:            "run",
+				name:            "vibe",
 				args:            append([]string{app}, cmd.args...),
 				enforceExisting: true,
 			}
@@ -84,6 +84,9 @@ func executeShellCommand(state *shellState, cmd parsedCommand, scope shellScope,
 	cmd = normalizeCommand(cmd)
 	if cmd.name == "" {
 		return "", nil
+	}
+	if scope == scopeGlobal && len(cmd.args) == 0 && !isKnownCommandName(cmd.name) {
+		cmd = parsedCommand{name: "vibe", args: []string{cmd.name}, enforceExisting: true}
 	}
 	if cmd.name == "cd" {
 		return handleCDCommand(state, cmd, scope, allowDefer)
@@ -241,9 +244,9 @@ func localAppValidationError(state *shellState, cmd parsedCommand) (string, bool
 	switch cmd.name {
 	case "app":
 		return renderShellError(fmt.Sprintf("error: app %q not found", app)), true
-	case "run":
+	case "vibe":
 		if cmd.enforceExisting {
-			return renderShellError(fmt.Sprintf("error: app %q not found. Run `run %s` to create it.", app, app)), true
+			return renderShellError(fmt.Sprintf("error: app %q not found. Run `vibe %s` to create it.", app, app)), true
 		}
 	case "shell", "rm", "delete":
 		return renderShellError(fmt.Sprintf("error: app %q not found", app)), true
@@ -267,7 +270,7 @@ func appExists(state *shellState, app string) bool {
 		return false
 	}
 	for _, name := range state.apps {
-		if name == app {
+		if name.Name == app {
 			return true
 		}
 	}
@@ -275,10 +278,7 @@ func appExists(state *shellState, app string) bool {
 }
 
 func renderAppsList(state *shellState) string {
-	if len(state.apps) == 0 {
-		return "No apps found."
-	}
-	return strings.Join(state.apps, "\n")
+	return renderAppsTable(state, false)
 }
 
 func renderShellError(text string) string {
@@ -324,17 +324,17 @@ func dispatchGlobalCommand(state *shellState, cmd parsedCommand) (string, tea.Cm
 		}
 		setAppContext(state, cmd.args[0])
 		return fmt.Sprintf("Entered config for %s", state.app), nil
-	case "run":
+	case "vibe":
 		if len(cmd.args) < 1 {
-			return "error: run requires an app name", nil
+			return "error: vibe requires an app name", nil
 		}
 		if cmd.enforceExisting && !appExists(state, cmd.args[0]) {
-			return renderShellError(fmt.Sprintf("error: app %q not found. Run `run %s` to create it.", cmd.args[0], cmd.args[0])), nil
+			return renderShellError(fmt.Sprintf("error: app %q not found. Run `vibe %s` to create it.", cmd.args[0], cmd.args[0])), nil
 		}
 		if state.appsLoaded && !cmd.enforceExisting && !appExists(state, cmd.args[0]) {
-			state.apps = append(state.apps, cmd.args[0])
+			state.apps = append(state.apps, appSummary{Name: cmd.args[0]})
 		}
-		return "", prepareInteractiveCmd(state, shellAction{kind: actionRun, app: cmd.args[0]})
+		return "", prepareInteractiveCmd(state, shellAction{kind: actionVibe, app: cmd.args[0]})
 	case "shell":
 		if len(cmd.args) < 1 {
 			return "error: shell requires an app name", nil
@@ -343,6 +343,16 @@ func dispatchGlobalCommand(state *shellState, cmd parsedCommand) (string, tea.Cm
 			return renderShellError(fmt.Sprintf("error: app %q not found", cmd.args[0])), nil
 		}
 		return "", prepareInteractiveCmd(state, shellAction{kind: actionShell, app: cmd.args[0]})
+	case "open":
+		if len(cmd.args) < 1 {
+			return "error: open requires an app name", nil
+		}
+		if state.appsLoaded && !appExists(state, cmd.args[0]) {
+			return renderShellError(fmt.Sprintf("error: app %q not found", cmd.args[0])), nil
+		}
+		return "", runAsync(func() (string, error) {
+			return openAppURL(state, cmd.args[0])
+		})
 	case "rm", "delete":
 		if len(cmd.args) < 1 {
 			return "error: rm requires an app name", nil
@@ -393,10 +403,14 @@ func dispatchAppCommand(state *shellState, cmd parsedCommand) (string, tea.Cmd) 
 	case "exit", "back":
 		setAppContext(state, "")
 		return "", nil
-	case "run":
-		return "", prepareInteractiveCmd(state, shellAction{kind: actionRun, app: state.app})
+	case "vibe":
+		return "", prepareInteractiveCmd(state, shellAction{kind: actionVibe, app: state.app})
 	case "shell":
 		return "", prepareInteractiveCmd(state, shellAction{kind: actionShell, app: state.app})
+	case "open":
+		return "", runAsync(func() (string, error) {
+			return openAppURL(state, state.app)
+		})
 	case "show":
 		return "", runAsync(func() (string, error) {
 			return renderAppSummary(state)
@@ -668,6 +682,9 @@ func commandLinesForScope(scope shellScope, includeAdvanced bool) []helpLine {
 	specs := commandSpecsForScope(scope)
 	lines := make([]helpLine, 0, len(specs))
 	for _, spec := range specs {
+		if spec.Hidden {
+			continue
+		}
 		if spec.Advanced && !includeAdvanced {
 			continue
 		}
@@ -683,6 +700,9 @@ func advancedCommandLinesForScope(scope shellScope) []helpLine {
 	specs := commandSpecsForScope(scope)
 	lines := make([]helpLine, 0, len(specs))
 	for _, spec := range specs {
+		if spec.Hidden {
+			continue
+		}
 		if !spec.Advanced {
 			continue
 		}
@@ -1010,7 +1030,15 @@ func loadAppsCmd(state *shellState, render bool) tea.Cmd {
 		}
 		defer cleanup()
 		apps, err := runRemoteAppsList(gateway)
-		return appsLoadedMsg{apps: apps, err: err, render: render, fromAppsCmd: render}
+		if err != nil {
+			return appsLoadedMsg{err: err, render: render, fromAppsCmd: render}
+		}
+		proxyEnabled := false
+		if summary, err := fetchRemoteProxyConfig(gateway); err == nil {
+			proxyEnabled = summary.Enabled
+		}
+		summaries, err := buildAppSummaries(gateway, appSnapshotsFromNames(apps), proxyEnabled)
+		return appsLoadedMsg{apps: summaries, err: err, render: render, fromAppsCmd: render}
 	}
 }
 
@@ -1083,7 +1111,13 @@ func parseShellCommand(line string) (parsedCommand, error) {
 	if len(fields) == 0 {
 		return parsedCommand{}, nil
 	}
-	return parsedCommand{name: strings.ToLower(fields[0]), args: fields[1:]}, nil
+	rawName := fields[0]
+	lowerName := strings.ToLower(rawName)
+	name := lowerName
+	if !isKnownCommandName(lowerName) {
+		name = rawName
+	}
+	return parsedCommand{name: name, args: fields[1:]}, nil
 }
 
 func splitShellArgs(input string) ([]string, error) {
@@ -1153,7 +1187,16 @@ func syncHostCmd(state *shellState) tea.Cmd {
 			_ = gateway.Close()
 			return hostSyncMsg{reachable: true, bootstrapped: true, err: err}
 		}
-		return hostSyncMsg{reachable: true, bootstrapped: true, apps: apps, gateway: gateway, gatewayHost: resolved.Host, err: nil}
+		proxyEnabled := false
+		if summary, err := fetchRemoteProxyConfig(gateway); err == nil {
+			proxyEnabled = summary.Enabled
+		}
+		summaries, err := buildAppSummaries(gateway, appSnapshotsFromNames(apps), proxyEnabled)
+		if err != nil {
+			_ = gateway.Close()
+			return hostSyncMsg{reachable: true, bootstrapped: true, err: err}
+		}
+		return hostSyncMsg{reachable: true, bootstrapped: true, apps: summaries, gateway: gateway, gatewayHost: resolved.Host, err: nil}
 	}
 }
 

@@ -31,10 +31,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
 
-	"github.com/pelletier/go-toml/v2"
-	"github.com/shayne/viberun/internal/agents"
 	"github.com/shayne/viberun/internal/config"
-	"github.com/shayne/viberun/internal/muxrpc"
 	"github.com/shayne/viberun/internal/proxy"
 	"github.com/shayne/viberun/internal/sshcmd"
 	"github.com/shayne/viberun/internal/target"
@@ -118,15 +115,21 @@ func runCLI() error {
 	if shouldStartShell() {
 		return runShell()
 	}
-	args := ensureRunSubcommand(normalizeArgs(os.Args[1:]))
+	args := normalizeArgs(os.Args[1:])
+	if len(args) == 0 {
+		args = []string{"--help"}
+	}
+	if len(args) > 0 && args[0] == "attach" {
+		return handleAttach(args[1:])
+	}
+	if hasVersionFlag(args) {
+		fmt.Fprintln(os.Stdout, versionString())
+		return nil
+	}
 	handlers := map[string]yargs.SubcommandHandler{
-		"run":       handleRunCommand,
-		"config":    handleConfigCommand,
-		"bootstrap": handleBootstrapCommand,
-		"proxy":     handleProxyCommand,
-		"users":     handleUsersCommand,
-		"wipe":      handleWipeCommand,
-		"version":   handleVersionCommand,
+		"attach": handleAttachCommand,
+		"setup":  handleSetupCommand,
+		"wipe":   handleWipeCommand,
 	}
 	if err := yargs.RunSubcommands(context.Background(), args, helpConfig, struct{}{}, handlers); err != nil {
 		if errors.Is(err, yargs.ErrShown) {
@@ -137,120 +140,53 @@ func runCLI() error {
 	return nil
 }
 
-type runFlags struct {
-	Agent        string `flag:"agent" help:"agent provider to run (codex, claude, gemini, ampcode, opencode, or npx:<pkg>/uvx:<pkg>)"`
-	ForwardAgent bool   `flag:"forward-agent" short:"A" help:"forward local SSH agent into the container"`
-	Delete       bool   `flag:"delete" help:"delete the app and snapshots (alias: --remove)"`
-	Yes          bool   `flag:"yes" short:"y" help:"skip confirmation prompts"`
-	Open         bool   `flag:"open" help:"open the app URL in a browser (url command only)"`
-	MakePublic   bool   `flag:"make-public" help:"allow anyone to access the app URL (url command only)"`
-	RequireLogin bool   `flag:"require-login" help:"require login for the app URL (url command only)"`
-	DisableURL   bool   `flag:"disable" help:"disable the app URL (url command only)"`
-	EnableURL    bool   `flag:"enable" help:"enable the app URL (url command only)"`
-	SetDomain    string `flag:"set-domain" help:"set a full domain for the app URL (url command only)"`
-	ResetDomain  bool   `flag:"reset-domain" help:"reset the app URL to the default domain (url command only)"`
-}
-
-type runArgs struct {
-	Target string `pos:"0" help:"app or app@host"`
-	Action string `pos:"1?" help:"snapshot|snapshots|restore|update|shell|url|users"`
-	Value  string `pos:"2?" help:"snapshot name for restore"`
-}
-
-type configFlags struct {
-	Host        string   `flag:"host" help:"set default host (alias for --default-host)"`
-	DefaultHost string   `flag:"default-host" help:"set default host"`
-	Agent       string   `flag:"agent" help:"set default agent provider"`
-	SetHosts    []string `flag:"set-host" help:"set host alias mapping as alias=host (repeatable)"`
-}
-
-type bootstrapFlags struct {
-	Local      bool   `flag:"local" help:"install server from local build instead of GitHub release"`
-	LocalPath  string `flag:"local-path" help:"install server from a local binary at this path"`
-	LocalImage bool   `flag:"local-image" help:"build and load the container image from the local Docker daemon"`
-}
-
-type bootstrapArgs struct {
-	Host string `pos:"0?" help:"host to bootstrap"`
-}
-
-type proxyArgs struct {
-	Action string `pos:"0?" help:"setup"`
-	Host   string `pos:"1?" help:"host to configure"`
-}
-
-type usersArgs struct {
-	Action string `pos:"0?" help:"list|add|remove|set-password"`
-	Host   string `pos:"1?" help:"host to configure"`
+type setupArgs struct {
+	Host string `pos:"0?" help:"host to set up"`
 }
 
 type wipeArgs struct {
 	Host string `pos:"0?" help:"host to wipe"`
 }
 
+type attachFlags struct {
+	Host  string `flag:"host" help:"host override"`
+	Agent string `flag:"agent" help:"agent override"`
+	Shell bool   `flag:"shell" help:"open an app shell instead of the agent session"`
+}
+
+type attachArgs struct {
+	App string `pos:"0" help:"app to attach"`
+}
+
 var helpConfig = yargs.HelpConfig{
 	Command: yargs.CommandInfo{
 		Name:        "viberun",
-		Description: "CLI-first agent app host",
+		Description: "Shell-first agent app host",
 		Examples: []string{
+			"viberun",
 			"viberun --help",
-			"viberun help run",
+			"viberun attach myapp",
+			"viberun help setup",
 			"viberun --version",
-			"viberun <app>",
-			"viberun <app> snapshot",
-			"viberun <app> restore latest",
-			"viberun <app> shell",
-			"viberun <app> url",
-			"viberun <app> users",
-			"viberun config --host myhost --agent codex",
-			"viberun bootstrap root@1.2.3.4",
-			"viberun proxy setup",
-			"viberun users list",
+			"viberun setup",
 			"viberun wipe",
 		},
 	},
 	SubCommands: map[string]yargs.SubCommandInfo{
-		"run": {
-			Name:        "run",
-			Description: "Run or manage an app session",
-			Usage:       "<app> [snapshot|snapshots|restore <snapshot>|update|shell|url]",
-			Examples: []string{
-				"viberun <app>",
-				"viberun <app> snapshot",
-				"viberun <app> restore latest",
-				"viberun <app> shell",
-				"viberun <app> url",
-				"viberun <app> --delete -y",
-			},
-			Hidden: true,
+		"attach": {
+			Name:        "attach",
+			Description: "Attach to an app session (internal)",
+			Usage:       "[--host <host>] [--agent <provider>] [--shell] <app>",
 		},
-		"config": {
-			Name:        "config",
-			Description: "Show or update the local configuration",
-		},
-		"bootstrap": {
-			Name:        "bootstrap",
-			Description: "Install or update the host-side server and image",
+		"setup": {
+			Name:        "setup",
+			Description: "Connect a server and install viberun",
 			Usage:       "[<host>]",
-		},
-		"proxy": {
-			Name:        "proxy",
-			Description: "Configure app URLs via the host proxy",
-			Usage:       "setup [<host>]",
-		},
-		"users": {
-			Name:        "users",
-			Description: "Manage URL users",
-			Usage:       "list | add --username <u> | remove --username <u> | set-password --username <u>",
 		},
 		"wipe": {
 			Name:        "wipe",
 			Description: "Wipe local config and all viberun state on a host",
 			Usage:       "[<host>]",
-		},
-		"version": {
-			Name:        "version",
-			Description: "Show CLI version",
 		},
 	},
 }
@@ -259,8 +195,11 @@ func normalizeArgs(args []string) []string {
 	if len(args) == 0 {
 		return args
 	}
-	if args[0] == "--version" {
-		return append([]string{"version"}, args[1:]...)
+	if args[0] == "version" {
+		return []string{"--version"}
+	}
+	if args[0] == "bootstrap" {
+		args = append([]string{"setup"}, args[1:]...)
 	}
 	if args[0] == "help" {
 		return rewriteHelpArgs(args[1:])
@@ -285,33 +224,19 @@ func rewriteHelpArgs(args []string) []string {
 	if isKnownCommand(args[0]) {
 		return []string{args[0], helpFlag}
 	}
-	return []string{"run", helpFlag}
+	if args[0] == "bootstrap" {
+		return []string{"setup", helpFlag}
+	}
+	return []string{helpFlag}
 }
 
 func isKnownCommand(value string) bool {
 	switch value {
-	case "run", "config", "bootstrap", "proxy", "users", "wipe", "version":
+	case "setup", "wipe":
 		return true
 	default:
 		return false
 	}
-}
-
-func ensureRunSubcommand(args []string) []string {
-	if len(args) == 0 {
-		return args
-	}
-	if isHelpFlag(args[0]) {
-		return args
-	}
-	cmd := firstNonFlag(args)
-	if cmd == "" {
-		return args
-	}
-	if isKnownCommand(cmd) {
-		return args
-	}
-	return append([]string{"run"}, args...)
 }
 
 func isHelpFlag(value string) bool {
@@ -323,495 +248,49 @@ func isHelpFlag(value string) bool {
 	}
 }
 
-func firstNonFlag(args []string) string {
-	skipNext := false
+func hasVersionFlag(args []string) bool {
 	for _, arg := range args {
-		if skipNext {
-			skipNext = false
-			continue
+		switch strings.TrimSpace(arg) {
+		case "--version", "-v":
+			return true
 		}
-		if arg == "--" {
-			return ""
-		}
-		if strings.HasPrefix(arg, "-") {
-			if strings.HasPrefix(arg, "--") {
-				if strings.Contains(arg, "=") {
-					continue
-				}
-				if consumesValue(arg) {
-					skipNext = true
-				}
-			}
-			continue
-		}
-		return arg
 	}
-	return ""
+	return false
 }
 
-func consumesValue(flag string) bool {
-	switch flag {
-	case "--agent", "--host", "--default-host", "--set-host", "--local-path":
-		return true
-	default:
-		return false
-	}
+func handleSetupCommand(_ context.Context, args []string) error {
+	return handleSetup(args)
 }
-
-func handleRunCommand(_ context.Context, args []string) error {
-	args = normalizeRunArgs(args)
-	accessFlags, err := parseAccessFlagValues(args)
-	if err != nil {
-		return err
-	}
-	result, err := yargs.ParseAndHandleHelp[struct{}, runFlags, runArgs](args, helpConfig)
+func handleSetup(args []string) error {
+	result, err := yargs.ParseAndHandleHelp[struct{}, struct{}, setupArgs](args, helpConfig)
 	if errors.Is(err, yargs.ErrShown) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	return runApp(result.SubCommandFlags, result.Args, accessFlags)
-}
-
-func normalizeRunArgs(args []string) []string {
-	if len(args) == 0 {
-		return args
-	}
-	out := make([]string, len(args))
-	for i, arg := range args {
-		if arg == "--remove" {
-			out[i] = "--delete"
-			continue
-		}
-		if strings.HasPrefix(arg, "--remove=") {
-			out[i] = "--delete=" + strings.TrimPrefix(arg, "--remove=")
-			continue
-		}
-		out[i] = arg
-	}
-	return out
-}
-
-type boolFlagValue struct {
-	set   bool
-	value bool
-}
-
-type accessFlagValues struct {
-	makePublic   boolFlagValue
-	requireLogin boolFlagValue
-}
-
-func parseAccessFlagValues(args []string) (accessFlagValues, error) {
-	makePublic, err := parseBoolFlagValue(args, "make-public")
+	state, err := newShellState()
 	if err != nil {
-		return accessFlagValues{}, err
+		return err
 	}
-	requireLogin, err := parseBoolFlagValue(args, "require-login")
-	if err != nil {
-		return accessFlagValues{}, err
-	}
-	return accessFlagValues{makePublic: makePublic, requireLogin: requireLogin}, nil
-}
-
-func parseBoolFlagValue(args []string, name string) (boolFlagValue, error) {
-	flag := "--" + name
-	prefix := flag + "="
-	var value boolFlagValue
-	for _, arg := range args {
-		if arg == flag {
-			if value.set {
-				return value, fmt.Errorf("%s specified more than once", flag)
-			}
-			value = boolFlagValue{set: true, value: true}
-			continue
-		}
-		if strings.HasPrefix(arg, prefix) {
-			if value.set {
-				return value, fmt.Errorf("%s specified more than once", flag)
-			}
-			raw := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(arg, prefix)))
-			switch raw {
-			case "true", "1":
-				value = boolFlagValue{set: true, value: true}
-			case "false", "0":
-				value = boolFlagValue{set: true, value: false}
-			default:
-				return value, fmt.Errorf("invalid value for %s (expected true or false)", flag)
-			}
-		}
-	}
-	return value, nil
-}
-
-func handleConfigCommand(_ context.Context, args []string) error {
-	return handleConfig(args)
-}
-
-func handleBootstrapCommand(_ context.Context, args []string) error {
-	return handleBootstrap(args)
-}
-
-func handleVersionCommand(_ context.Context, args []string) error {
-	_, err := yargs.ParseAndHandleHelp[struct{}, struct{}, struct{}](args, helpConfig)
-	if errors.Is(err, yargs.ErrShown) {
-		return nil
+	state.bootstrapped = strings.TrimSpace(state.host) != ""
+	state.setupNeeded = false
+	action := setupAction{host: strings.TrimSpace(result.Args.Host)}
+	ran, note, err := runShellSetup(state, action)
+	if note != "" {
+		fmt.Fprintln(os.Stdout, note)
 	}
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stdout, versionString())
-	return nil
-}
-
-func handleConfig(args []string) error {
-	result, err := yargs.ParseAndHandleHelp[struct{}, configFlags, struct{}](args, helpConfig)
-	if errors.Is(err, yargs.ErrShown) {
+	if !ran {
 		return nil
 	}
-	if err != nil {
-		return err
-	}
-
-	flags := result.SubCommandFlags
-	cfg, path, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-
-	if configFlagsEmpty(flags) {
-		return showConfig(cfg, path)
-	}
-
-	updated := false
-	resolvedHost := strings.TrimSpace(flags.DefaultHost)
-	if strings.TrimSpace(flags.Host) != "" && resolvedHost != "" && strings.TrimSpace(flags.Host) != resolvedHost {
-		return newUsageError("conflicting --host and --default-host values")
-	}
-	if strings.TrimSpace(flags.Host) != "" {
-		resolvedHost = strings.TrimSpace(flags.Host)
-	}
-	if resolvedHost != "" {
-		cfg.DefaultHost = resolvedHost
-		updated = true
-	}
-	if strings.TrimSpace(flags.Agent) != "" {
-		cfg.AgentProvider = strings.TrimSpace(flags.Agent)
-		updated = true
-	}
-	if len(flags.SetHosts) > 0 {
-		if cfg.Hosts == nil {
-			cfg.Hosts = map[string]string{}
-		}
-		for _, entry := range flags.SetHosts {
-			parts := strings.SplitN(entry, "=", 2)
-			if len(parts) != 2 {
-				return newUsageError(fmt.Sprintf("invalid host mapping %q (expected alias=host)", entry))
-			}
-			alias := strings.TrimSpace(parts[0])
-			host := strings.TrimSpace(parts[1])
-			if alias == "" || host == "" {
-				return newUsageError(fmt.Sprintf("invalid host mapping %q (expected alias=host)", entry))
-			}
-			cfg.Hosts[alias] = host
-		}
-		updated = true
-	}
-	if !updated {
-		return showConfig(cfg, path)
-	}
-
-	if err := config.Save(path, cfg); err != nil {
-		return fmt.Errorf("failed to save config: %w", err)
-	}
-	fmt.Fprintf(os.Stdout, "wrote config to %s\n", path)
 	return nil
-}
-
-func showConfig(cfg config.Config, path string) error {
-	data, err := toml.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to format config: %w", err)
-	}
-	fmt.Fprintf(os.Stdout, "Config path: %s\n%s\n", path, string(data))
-	return nil
-}
-
-func handleBootstrap(args []string) error {
-	if !isDevMode() && os.Getenv("VIBERUN_ALLOW_BOOTSTRAP") == "" {
-		return fmt.Errorf("bootstrap is only available in development mode; run `viberun` to bootstrap interactively")
-	}
-	result, err := yargs.ParseAndHandleHelp[struct{}, bootstrapFlags, bootstrapArgs](args, helpConfig)
-	if errors.Is(err, yargs.ErrShown) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	flags := result.SubCommandFlags
-	hostArg := strings.TrimSpace(result.Args.Host)
-
-	cfg, path, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-
-	resolved, err := target.ResolveHost(hostArg, cfg)
-	if err != nil {
-		return newUsageError(fmt.Sprintf("invalid host: %v", err))
-	}
-
-	if _, err := exec.LookPath("ssh"); err != nil {
-		return fmt.Errorf("ssh is required but was not found in PATH")
-	}
-
-	tty := term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
-	if !tty {
-		fmt.Fprintln(os.Stderr, "bootstrap may require sudo; run from a terminal if you are prompted for a password")
-	}
-	ui := tui.NewProgress(os.Stdout, tty, "bootstrap", resolved.Host)
-	ui.Start()
-	defer ui.Stop()
-
-	env := []string{}
-	for _, key := range []string{"VIBERUN_IMAGE", "VIBERUN_PROXY_IMAGE", "VIBERUN_SERVER_VERSION", "VIBERUN_SERVER_REPO"} {
-		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-			env = append(env, key+"="+value)
-		}
-	}
-	localBootstrap := flags.Local
-	localPath := strings.TrimSpace(flags.LocalPath)
-	localImage := flags.LocalImage
-	if strings.TrimSpace(localPath) != "" {
-		localBootstrap = true
-	}
-	if isDevRun() || isDevVersion() {
-		if !localBootstrap && strings.TrimSpace(localPath) == "" {
-			localBootstrap = true
-		}
-		if !localImage {
-			localImage = true
-		}
-	}
-	if localBootstrap {
-		ui.Step("Stage server binary")
-		remotePath, err := stageLocalServerBinary(resolved.Host, localPath)
-		if err != nil {
-			ui.Fail(err.Error())
-			return newSilentError(fmt.Errorf("failed to stage local server binary: %w", err))
-		}
-		ui.Done("")
-		env = append(env, "VIBERUN_SERVER_LOCAL_PATH="+remotePath)
-	}
-	if localImage {
-		ui.Step("Build container image")
-		ui.Suspend()
-		if err := stageLocalImage(resolved.Host); err != nil {
-			ui.Resume()
-			ui.Fail(err.Error())
-			return newSilentError(fmt.Errorf("failed to stage local image: %w", err))
-		}
-		ui.Resume()
-		ui.Done("")
-		ui.Step("Build proxy image")
-		ui.Suspend()
-		if err := stageLocalProxyImage(resolved.Host); err != nil {
-			ui.Resume()
-			ui.Fail(err.Error())
-			return newSilentError(fmt.Errorf("failed to stage local proxy image: %w", err))
-		}
-		ui.Resume()
-		ui.Done("")
-		env = append(env, "VIBERUN_SKIP_IMAGE_PULL=1")
-	}
-	proxyImageTag := ""
-	if localImage && (isDevRun() || isDevVersion()) {
-		proxyImageTag = devProxyImageTag()
-	}
-
-	command := bootstrapCommand(bootstrapScript())
-	remoteArgs := []string{"bash", "-lc", shellQuote(command)}
-	if len(env) > 0 {
-		remoteArgs = append([]string{"env"}, append(env, remoteArgs...)...)
-	}
-	sshArgs := sshcmd.BuildArgs(resolved.Host, remoteArgs, tty)
-	sshArgs = append([]string{"-o", "LogLevel=ERROR"}, sshArgs...)
-
-	cmd := exec.Command("ssh", sshArgs...)
-	cmd.Env = normalizedSshEnv()
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	ui.Step("Run bootstrap")
-	ui.Suspend()
-	if err := cmd.Run(); err != nil {
-		ui.Resume()
-		ui.Fail(err.Error())
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return newSilentError(exitErr)
-		}
-		return fmt.Errorf("failed to start ssh: %w", err)
-	}
-	ui.Resume()
-	ui.Done("")
-	if strings.TrimSpace(cfg.DefaultHost) == "" && strings.TrimSpace(hostArg) != "" {
-		cfg.DefaultHost = hostArg
-		if err := config.Save(path, cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "Bootstrap complete, but failed to save default host: %v\n", err)
-			fmt.Fprintf(os.Stderr, "Run `viberun config --host %s` to set it manually.\n", hostArg)
-		} else {
-			fmt.Fprintf(os.Stdout, "default host set to %s\n", hostArg)
-		}
-	}
-	if tty {
-		gateway, err := startGateway(resolved.Host, "", nil, false)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "proxy setup failed: %v\n", err)
-		} else {
-			defer func() { _ = gateway.Close() }()
-			if err := runProxySetupFlow(resolved.Host, gateway, proxySetupOptions{updateArtifacts: true, showSkipHint: true, proxyImage: proxyImageTag}); err != nil {
-				fmt.Fprintf(os.Stderr, "proxy setup failed: %v\n", err)
-			}
-		}
-	}
-	fmt.Fprintln(os.Stdout, "Bootstrap complete.")
-	return nil
-}
-
-func handleProxyCommand(_ context.Context, args []string) error {
-	return handleProxy(args)
-}
-
-func handleUsersCommand(_ context.Context, args []string) error {
-	return handleUsers(args)
 }
 
 func handleWipeCommand(_ context.Context, args []string) error {
 	return handleWipe(args)
-}
-
-func handleProxy(args []string) error {
-	result, err := yargs.ParseAndHandleHelp[struct{}, struct{}, proxyArgs](args, helpConfig)
-	if errors.Is(err, yargs.ErrShown) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	action := strings.TrimSpace(result.Args.Action)
-	if action == "" || action != "setup" {
-		return newUsageError("Usage: viberun proxy setup [<host>]")
-	}
-	hostArg := strings.TrimSpace(result.Args.Host)
-
-	cfg, _, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-
-	resolved, err := target.ResolveHost(hostArg, cfg)
-	if err != nil {
-		return newUsageError(fmt.Sprintf("invalid host: %v", err))
-	}
-
-	if _, err := exec.LookPath("ssh"); err != nil {
-		return fmt.Errorf("ssh is required but was not found in PATH")
-	}
-	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-		return fmt.Errorf("proxy setup requires a TTY")
-	}
-	gateway, err := startGateway(resolved.Host, "", nil, false)
-	if err != nil {
-		return fmt.Errorf("proxy setup failed: %w", err)
-	}
-	defer func() { _ = gateway.Close() }()
-	if err := runProxySetupFlow(resolved.Host, gateway, proxySetupOptions{updateArtifacts: true, forceSetup: true}); err != nil {
-		return fmt.Errorf("proxy setup failed: %w", err)
-	}
-	return nil
-}
-
-type usersFlags struct {
-	Username string `flag:"username" help:"username"`
-}
-
-func handleUsers(args []string) error {
-	result, err := yargs.ParseAndHandleHelp[struct{}, struct{}, usersArgs](args, helpConfig)
-	if errors.Is(err, yargs.ErrShown) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	action := strings.TrimSpace(result.Args.Action)
-	if action == "" {
-		return newUsageError("Usage: viberun users list|add|remove|set-password [<host>]")
-	}
-	hostArg := strings.TrimSpace(result.Args.Host)
-
-	cfg, _, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-	resolved, err := target.ResolveHost(hostArg, cfg)
-	if err != nil {
-		return newUsageError(fmt.Sprintf("invalid host: %v", err))
-	}
-
-	if _, err := exec.LookPath("ssh"); err != nil {
-		return fmt.Errorf("ssh is required but was not found in PATH")
-	}
-	if err := ensureDevServerSynced(resolved.Host); err != nil {
-		return fmt.Errorf("failed to sync dev server: %w", err)
-	}
-	gateway, err := startGateway(resolved.Host, "", nil, false)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = gateway.Close() }()
-
-	switch action {
-	case "list":
-		if err := runRemoteUsersList(gateway); err != nil {
-			return fmt.Errorf("users list failed: %w", err)
-		}
-	case "add", "set-password", "remove":
-		parsed, err := yargs.ParseFlags[usersFlags](args[1:])
-		if err != nil {
-			return err
-		}
-		username := strings.TrimSpace(parsed.Flags.Username)
-		if username == "" {
-			return newUsageError("username is required")
-		}
-		if action == "remove" {
-			if err := runRemoteUsersRemove(gateway, username); err != nil {
-				return fmt.Errorf("users remove failed: %w", err)
-			}
-			return nil
-		}
-		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-			return fmt.Errorf("user management requires a TTY")
-		}
-		password, err := tui.PromptPassword(os.Stdin, os.Stdout, "Password")
-		if err != nil {
-			return fmt.Errorf("failed to read password: %w", err)
-		}
-		if action == "add" {
-			if err := runRemoteUsersAdd(gateway, username, password); err != nil {
-				return fmt.Errorf("users add failed: %w", err)
-			}
-		} else {
-			if err := runRemoteUsersSetPassword(gateway, username, password); err != nil {
-				return fmt.Errorf("users set-password failed: %w", err)
-			}
-		}
-	default:
-		return newUsageError("Usage: viberun users list|add|remove|set-password [<host>]")
-	}
-	return nil
 }
 
 func handleWipe(args []string) error {
@@ -849,6 +328,39 @@ func handleWipe(args []string) error {
 	return nil
 }
 
+func handleAttachCommand(_ context.Context, args []string) error {
+	return handleAttach(args)
+}
+
+func handleAttach(args []string) error {
+	parseArgs := append([]string{"attach"}, args...)
+	result, err := yargs.ParseAndHandleHelp[struct{}, attachFlags, attachArgs](parseArgs, helpConfig)
+	if errors.Is(err, yargs.ErrShown) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(result.Args.App) == "" {
+		return newUsageError("attach requires an app name")
+	}
+	state, err := newShellState()
+	if err != nil {
+		return err
+	}
+	if host := strings.TrimSpace(result.SubCommandFlags.Host); host != "" {
+		state.host = host
+	}
+	if agent := strings.TrimSpace(result.SubCommandFlags.Agent); agent != "" {
+		state.agent = agent
+	}
+	action := ""
+	if result.SubCommandFlags.Shell {
+		action = "shell"
+	}
+	return runShellInteractive(state, result.Args.App, action)
+}
+
 func promptProxySetup() bool {
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Fprint(os.Stdout, "Set up a public domain name? [y/N]: ")
@@ -873,7 +385,7 @@ func runProxySetupFlow(host string, gateway *gatewayClient, opts proxySetupOptio
 	if err != nil && !opts.forceSetup {
 		if !promptYesNoDefaultNo("Existing public domain settings could not be read. Continue with setup? [y/N]: ") {
 			if opts.showSkipHint {
-				fmt.Fprintln(os.Stdout, "Set up a public domain name later with: viberun proxy setup")
+				fmt.Fprintln(os.Stdout, "Set up a public domain name later with: proxy setup")
 			}
 			return nil
 		}
@@ -932,7 +444,7 @@ func runProxySetupFlow(host string, gateway *gatewayClient, opts proxySetupOptio
 	} else {
 		if !opts.forceSetup && !promptProxySetup() {
 			if opts.showSkipHint {
-				fmt.Fprintln(os.Stdout, "Set up a public domain name later with: viberun proxy setup")
+				fmt.Fprintln(os.Stdout, "Set up a public domain name later with: proxy setup")
 			}
 			return nil
 		}
@@ -1053,7 +565,7 @@ func runRemoteProxySetup(gateway *gatewayClient, domain string, publicIP string,
 			strings.Contains(lower, "unknown flag: --username") ||
 			strings.Contains(lower, "unknown flag: --password-stdin") ||
 			strings.Contains(lower, "unknown flag: --proxy-image") {
-			return fmt.Errorf("remote viberun-server is out of date; re-run bootstrap to update it")
+			return fmt.Errorf("remote viberun-server is out of date; rerun setup to update it")
 		}
 		return err
 	}
@@ -1131,15 +643,6 @@ func fetchRemoteProxyConfig(gateway *gatewayClient) (proxyConfigSummary, error) 
 		return proxyConfigSummary{}, fmt.Errorf("failed to parse proxy config: %w", err)
 	}
 	return summary, nil
-}
-
-func runRemoteUsersList(gateway *gatewayClient) error {
-	output, err := gateway.command([]string{"proxy", "users", "list"}, "", nil)
-	if err != nil {
-		return err
-	}
-	fmt.Fprint(os.Stdout, output)
-	return nil
 }
 
 func runRemoteUsersAdd(gateway *gatewayClient, username string, password string) error {
@@ -1244,75 +747,6 @@ func runRemoteSetUsers(gateway *gatewayClient, app string, users []string) error
 	return err
 }
 
-type accessOverride struct {
-	set    bool
-	access string
-}
-
-func resolveAccessOverride(flags accessFlagValues) (accessOverride, error) {
-	var override accessOverride
-	if flags.makePublic.set {
-		override = accessOverride{set: true, access: accessFromMakePublic(flags.makePublic.value)}
-	}
-	if flags.requireLogin.set {
-		desired := accessFromRequireLogin(flags.requireLogin.value)
-		if override.set && override.access != desired {
-			return accessOverride{}, fmt.Errorf("choose either --make-public or --require-login")
-		}
-		override = accessOverride{set: true, access: desired}
-	}
-	return override, nil
-}
-
-func accessFromMakePublic(value bool) string {
-	if value {
-		return "public"
-	}
-	return "private"
-}
-
-func accessFromRequireLogin(value bool) string {
-	if value {
-		return "private"
-	}
-	return "public"
-}
-
-func applyURLUpdates(gateway *gatewayClient, app string, flags runFlags, access accessOverride) error {
-	if flags.DisableURL && flags.EnableURL {
-		return fmt.Errorf("choose either --disable or --enable")
-	}
-	if flags.SetDomain != "" && flags.ResetDomain {
-		return fmt.Errorf("choose either --set-domain or --reset-domain")
-	}
-	if access.set {
-		if err := runRemoteSetAccess(gateway, app, access.access); err != nil {
-			return err
-		}
-	}
-	if flags.DisableURL {
-		if err := runRemoteSetDisabled(gateway, app, true); err != nil {
-			return err
-		}
-	}
-	if flags.EnableURL {
-		if err := runRemoteSetDisabled(gateway, app, false); err != nil {
-			return err
-		}
-	}
-	if flags.SetDomain != "" {
-		if err := runRemoteSetDomain(gateway, app, flags.SetDomain, false); err != nil {
-			return err
-		}
-	}
-	if flags.ResetDomain {
-		if err := runRemoteSetDomain(gateway, app, "", true); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func promptRecreateApps(gateway *gatewayClient, host string) error {
 	apps, err := runRemoteAppsList(gateway)
 	if err != nil {
@@ -1322,7 +756,7 @@ func promptRecreateApps(gateway *gatewayClient, host string) error {
 		return nil
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-		fmt.Fprintln(os.Stdout, "App URLs changed. Re-run `viberun <app> update` to refresh environment variables.")
+		fmt.Fprintln(os.Stdout, "App URLs changed. Run `app <app>` then `update` to refresh environment variables.")
 		return nil
 	}
 	prompt := fmt.Sprintf("Recreate %d app container(s) to set URL env vars? [Y/n]: ", len(apps))
@@ -1336,21 +770,6 @@ func promptRecreateApps(gateway *gatewayClient, host string) error {
 		}
 	}
 	return nil
-}
-
-func maybeRecreateAppForURLChange(gateway *gatewayClient, host string, before proxyInfo, after proxyInfo) error {
-	if before.URL == after.URL {
-		return nil
-	}
-	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-		fmt.Fprintf(os.Stdout, "App URL changed for %s. Run `viberun %s update` to refresh environment variables.\n", after.App, after.App)
-		return nil
-	}
-	prompt := fmt.Sprintf("App URL changed for %s. Recreate container to update env vars? [Y/n]: ", after.App)
-	if !promptYesNoDefaultYes(prompt) {
-		return nil
-	}
-	return runRemoteAppUpdate(gateway, host, after.App)
 }
 
 func printURLSummary(out io.Writer, info proxyInfo) {
@@ -1382,29 +801,14 @@ func printURLSummary(out io.Writer, info proxyInfo) {
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, styler.header("Commands:"))
 	styler.commands(out, []commandLine{
-		{cmd: fmt.Sprintf("viberun %s url --set-domain <domain>", info.App), desc: "set a full domain (e.g., myblog.com)"},
-		{cmd: fmt.Sprintf("viberun %s url --reset-domain", info.App), desc: "reset to the default domain"},
-		{cmd: fmt.Sprintf("viberun %s users", info.App), desc: "manage who can access this app"},
-		{cmd: fmt.Sprintf("viberun %s url --make-public", info.App), desc: "allow anyone to access"},
-		{cmd: fmt.Sprintf("viberun %s url --require-login", info.App), desc: "require login to access"},
-		{cmd: fmt.Sprintf("viberun %s url --disable", info.App), desc: "turn off the URL"},
-		{cmd: fmt.Sprintf("viberun %s url --enable", info.App), desc: "turn the URL back on"},
+		{cmd: fmt.Sprintf("app %s url set-domain <domain>", info.App), desc: "set a full domain (e.g., myblog.com)"},
+		{cmd: fmt.Sprintf("app %s url reset-domain", info.App), desc: "reset to the default domain"},
+		{cmd: fmt.Sprintf("app %s users", info.App), desc: "manage who can access this app"},
+		{cmd: fmt.Sprintf("app %s url public", info.App), desc: "allow anyone to access"},
+		{cmd: fmt.Sprintf("app %s url private", info.App), desc: "require login to access"},
+		{cmd: fmt.Sprintf("app %s url disable", info.App), desc: "turn off the URL"},
+		{cmd: fmt.Sprintf("app %s url enable", info.App), desc: "turn the URL back on"},
 	})
-}
-
-func printURLActionResult(out io.Writer, info proxyInfo) {
-	styler := newURLStyler(out)
-	status := "requires login"
-	if info.Disabled {
-		status = "disabled"
-	} else if info.Access == "public" {
-		status = "public"
-	}
-	if info.URL != "" && !info.Disabled {
-		fmt.Fprintf(out, "%s %s %s\n", styler.value(info.App+":"), styler.status(status), styler.value(fmt.Sprintf("(%s)", info.URL)))
-		return
-	}
-	fmt.Fprintf(out, "%s %s\n", styler.value(info.App+":"), styler.status(status))
 }
 
 type urlStyler struct {
@@ -1620,7 +1024,7 @@ func runUsersEditor(gateway *gatewayClient, app string, info proxyInfo) (bool, e
 		secondaryOptions = append(secondaryOptions, option)
 	}
 	if len(secondaryOptions) == 0 {
-		fmt.Fprintln(os.Stdout, "No secondary users configured. Add one with: viberun users add --username <u>")
+		fmt.Fprintln(os.Stdout, "No secondary users configured. Add one with: users add --username <u>")
 		return false, nil
 	}
 	title := "Users with access"
@@ -1681,357 +1085,17 @@ func sameStringSet(a []string, b []string) bool {
 	return true
 }
 
-func configFlagsEmpty(flags configFlags) bool {
-	return strings.TrimSpace(flags.Host) == "" &&
-		strings.TrimSpace(flags.DefaultHost) == "" &&
-		strings.TrimSpace(flags.Agent) == "" &&
-		len(flags.SetHosts) == 0
-}
-
-func runApp(flags runFlags, args runArgs, accessFlags accessFlagValues) error {
-	targetArg := strings.TrimSpace(args.Target)
-	if targetArg == "" {
-		return exitUsage(runUsageFull())
-	}
-
-	actionArgs := []string{}
-	action := strings.TrimSpace(args.Action)
-	value := strings.TrimSpace(args.Value)
-	wantURL := false
-	wantUsers := false
-	if action != "" {
-		switch action {
-		case "snapshot":
-			if value != "" {
-				return exitUsage(runUsageActions())
-			}
-			actionArgs = []string{"snapshot"}
-		case "snapshots":
-			if value != "" {
-				return exitUsage(runUsageActions())
-			}
-			actionArgs = []string{"snapshots"}
-		case "shell":
-			if value != "" {
-				return exitUsage(runUsageActions())
-			}
-			actionArgs = []string{"shell"}
-		case "url":
-			if value != "" {
-				return exitUsage("Usage: viberun <app> url [flags]")
-			}
-			wantURL = true
-		case "users":
-			if value != "" {
-				return exitUsage("Usage: viberun <app> users")
-			}
-			wantUsers = true
-		case "restore":
-			if value == "" {
-				return exitUsage(runUsageRestore())
-			}
-			actionArgs = []string{"restore", value}
-		default:
-			return exitUsage(runUsageActions())
-		}
-	}
-	if flags.Delete {
-		if len(actionArgs) != 0 {
-			return exitUsage(runUsageDelete())
-		}
-		if !flags.Yes {
-			if !promptDelete(targetArg) {
-				fmt.Fprintln(os.Stdout, "delete cancelled")
-				return nil
-			}
-		}
-		actionArgs = []string{"delete"}
-	}
-
-	if flags.Open && !wantURL {
-		return exitUsage("Usage: viberun <app> url [flags]")
-	}
-	accessOverride, err := resolveAccessOverride(accessFlags)
-	if err != nil {
-		return exitUsage(err.Error())
-	}
-	if (accessOverride.set || flags.DisableURL || flags.EnableURL || flags.SetDomain != "" || flags.ResetDomain) && !wantURL {
-		return exitUsage("Usage: viberun <app> url [--make-public|--require-login|--disable|--enable|--set-domain <domain>|--reset-domain]")
-	}
-	if wantUsers && !term.IsTerminal(int(os.Stdin.Fd())) {
-		return fmt.Errorf("app users requires a TTY")
-	}
-	interactive := !wantURL && !wantUsers && (len(actionArgs) == 0 || (len(actionArgs) == 1 && actionArgs[0] == "shell"))
-	tty := interactive && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
-
-	cfg, cfgPath, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-	explicitAgent := strings.TrimSpace(flags.Agent)
-	configuredAgent := strings.TrimSpace(cfg.AgentProvider)
-	agentProvider := explicitAgent
-	if agentProvider == "" {
-		agentProvider = configuredAgent
-	}
-	needsAgentPrompt := !wantURL && !wantUsers && agentProvider == "" && tty
-	agentProviderForChecks := agentProvider
-	if agentProviderForChecks == "" {
-		agentProviderForChecks = agents.DefaultProvider()
-	}
-
-	resolved, err := target.Resolve(targetArg, cfg)
-	if err != nil {
-		if errors.Is(err, target.ErrNoHostConfigured) {
-			return missingHostError{}
-		}
-		return exitUsage(fmt.Sprintf("invalid target: %v", err))
-	}
-
-	if _, err := exec.LookPath("ssh"); err != nil {
-		return fmt.Errorf("ssh is required but was not found in PATH")
-	}
-	if err := ensureDevServerSynced(resolved.Host); err != nil {
-		return err
-	}
-	gateway, err := startGateway(resolved.Host, "", nil, flags.ForwardAgent)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = gateway.Close() }()
-
-	if wantURL {
-		changesRequested := accessOverride.set || flags.DisableURL || flags.EnableURL || flags.SetDomain != "" || flags.ResetDomain
-		var before proxyInfo
-		if changesRequested {
-			info, err := fetchProxyInfo(gateway, resolved.App)
-			if err != nil {
-				return err
-			}
-			before = info
-			if err := applyURLUpdates(gateway, resolved.App, flags, accessOverride); err != nil {
-				return err
-			}
-		}
-		info, err := fetchProxyInfo(gateway, resolved.App)
-		if err != nil {
-			return err
-		}
-		if changesRequested {
-			printURLActionResult(os.Stdout, info)
-		} else {
-			printURLSummary(os.Stdout, info)
-		}
-		if flags.Open {
-			if info.Disabled || strings.TrimSpace(info.URL) == "" {
-				return fmt.Errorf("URL is not available")
-			}
-			if err := openURL(info.URL); err != nil {
-				return err
-			}
-		}
-		if changesRequested {
-			if err := maybeRecreateAppForURLChange(gateway, resolved.Host, before, info); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
-	if wantUsers {
-		info, err := fetchProxyInfo(gateway, resolved.App)
-		if err != nil {
-			return err
-		}
-		updated, err := runUsersEditor(gateway, resolved.App, info)
-		if err != nil {
-			return err
-		}
-		if updated {
-			fmt.Fprintln(os.Stdout, "Updated app user access.")
-		}
-		return nil
-	}
-
-	if interactive && !tty {
-		return fmt.Errorf("interactive sessions require a TTY; run from a terminal or use snapshot/restore commands")
-	}
-	sessionEnv := map[string]string{}
-	if tty {
-		if colorTerm := strings.TrimSpace(os.Getenv("COLORTERM")); colorTerm != "" {
-			sessionEnv["COLORTERM"] = colorTerm
-		}
-		if termValue := strings.TrimSpace(os.Getenv("TERM")); termValue != "" {
-			sessionEnv["TERM"] = termValue
-		}
-	}
-	if agentCheck := strings.TrimSpace(os.Getenv("VIBERUN_AGENT_CHECK")); agentCheck != "" {
-		sessionEnv["VIBERUN_AGENT_CHECK"] = agentCheck
-	}
-	if flags.ForwardAgent {
-		sessionEnv["VIBERUN_FORWARD_AGENT"] = "1"
-	}
-	needsCreate := false
-	if interactive && tty {
-		exists, err := remoteContainerExists(gateway, resolved.App, agentProviderForChecks)
-		if err != nil {
-			return err
-		}
-		if !exists {
-			if !promptCreateLocal(resolved.App) {
-				fmt.Fprintln(os.Stderr, "aborted")
-				return newSilentError(errors.New("aborted"))
-			}
-			needsCreate = true
-			sessionEnv["VIBERUN_AUTO_CREATE"] = "1"
-		}
-	}
-	if needsAgentPrompt {
-		selection, err := tui.SelectDefaultAgent(os.Stdin, os.Stdout)
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(selection) != "" {
-			cfg.AgentProvider = selection
-			if err := config.Save(cfgPath, cfg); err != nil {
-				return fmt.Errorf("failed to save config: %w", err)
-			}
-			agentProvider = selection
-		}
-	}
-	if strings.TrimSpace(agentProvider) == "" {
-		agentProvider = agentProviderForChecks
-	}
-	agentSpec, err := agents.Resolve(agentProvider)
-	if err != nil {
-		return err
-	}
-	agentProvider = agentSpec.Provider
-	if interactive && tty && needsCreate {
-		localAuth, details, err := discoverLocalAuth(agentSpec.ID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "auth discovery failed: %v\n", err)
-		} else if localAuth != nil && promptCopyAuth(resolved.App, agentSpec.Label, details) {
-			bundle, err := stageAuthBundle(gateway, localAuth)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to stage auth: %v\n", err)
-			} else if encoded, err := encodeAuthBundle(bundle); err != nil {
-				fmt.Fprintf(os.Stderr, "failed to encode auth: %v\n", err)
-			} else if encoded != "" {
-				sessionEnv["VIBERUN_AUTH_BUNDLE"] = encoded
-			}
-		}
-	}
-	if interactive {
-		cfg, err := discoverLocalUserConfig()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "user config discovery failed: %v\n", err)
-		} else if encoded, err := encodeUserConfig(cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to encode user config: %v\n", err)
-		} else if encoded != "" {
-			sessionEnv["VIBERUN_USER_CONFIG"] = encoded
-		}
-	}
-	var forwardClose func()
-	cleanup := func() {
-		if forwardClose != nil {
-			forwardClose()
-			forwardClose = nil
-		}
-	}
-	defer cleanup()
-	if interactive && !isLocalHost(resolved.Host) {
-		hostPort, err := resolveHostPort(gateway, resolved.App, agentProvider)
-		if err != nil {
-			return err
-		}
-		if err := ensureLocalPortAvailable(hostPort); err != nil {
-			return err
-		}
-		forwardClose, err = startLocalForwardMux(gateway, hostPort)
-		if err != nil {
-			return err
-		}
-	}
-
-	var outputTail tailBuffer
-	outputTail.max = 32 * 1024
-	if interactive && tty {
-		if err := gateway.startOpenStream(func(url string) {
-			if err := openURL(url); err != nil {
-				fmt.Fprintf(os.Stderr, "open url failed: %v\n", err)
-			}
-		}); err != nil {
-			return err
-		}
-		action := ""
-		if len(actionArgs) > 0 {
-			action = actionArgs[0]
-		}
-		ptyMeta := muxrpc.PtyMeta{
-			App:    resolved.App,
-			Action: action,
-			Agent:  agentProvider,
-			Env:    sessionEnv,
-		}
-		ptyStream, err := gateway.openStream("pty", ptyMeta)
-		if err != nil {
-			return err
-		}
-		if err := runInteractiveMuxSession(resolved, gateway, ptyStream, &outputTail); err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				maybeClearDefaultAgentOnFailure(cfg, cfgPath, flags, resolved.App, outputTail.String())
-				return newSilentError(exitErr)
-			}
-			return err
-		}
-		return nil
-	}
-	if len(actionArgs) > 0 {
-		commandArgs := buildAppCommandArgs(agentProvider, resolved.App, actionArgs)
-		output, err := gateway.command(commandArgs, "", nil)
-		if err != nil {
-			return err
-		}
-		fmt.Fprint(os.Stdout, output)
-	}
-	return nil
-}
-
-func exitUsage(message string) error {
-	return newUsageError(message)
-}
-
-func runUsageFull() string {
-	return "Usage: viberun [--agent provider] [--forward-agent|-A] <app> | viberun [--agent provider] [--forward-agent|-A] <app>@<host> | viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun [--agent provider] [--forward-agent|-A] <app> restore <snapshot> | viberun <app> shell | viberun <app> url [flags] | viberun <app> users | viberun <app> --delete [-y] | viberun bootstrap [<host>] | viberun proxy setup [<host>] | viberun users <list|add|remove|set-password> | viberun wipe [<host>] | viberun config [options]"
-}
-
-func runUsageActions() string {
-	return "Usage: viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun [--agent provider] [--forward-agent|-A] <app> restore <snapshot> | viberun <app> shell | viberun <app> url [flags] | viberun <app> users"
-}
-
-func runUsageRestore() string {
-	return "Usage: viberun [--agent provider] [--forward-agent|-A] <app> restore <snapshot>"
-}
-
-func runUsageDelete() string {
-	return "Usage: viberun [--delete] <app> | viberun [--agent provider] [--forward-agent|-A] <app> snapshot | viberun [--agent provider] [--forward-agent|-A] <app> snapshots | viberun [--agent provider] [--forward-agent|-A] <app> restore <snapshot> | viberun <app> shell | viberun <app> url [flags]"
-}
-
 func printMissingHostMessage() {
-	fmt.Fprintln(os.Stderr, "No host is configured yet, so viberun does not know where to run your app.")
-	fmt.Fprintln(os.Stderr, "Please run bootstrap against a host first:")
-	fmt.Fprintln(os.Stderr, "  viberun bootstrap <host>   (example: viberun bootstrap user@your-host)")
-	fmt.Fprintln(os.Stderr, "Then retry with:")
-	fmt.Fprintln(os.Stderr, "  viberun <app>")
-	fmt.Fprintln(os.Stderr, "Or run once with an explicit host:")
-	fmt.Fprintln(os.Stderr, "  viberun <app>@<host>")
-	fmt.Fprintln(os.Stderr, "To set a default host for future runs:")
-	fmt.Fprintln(os.Stderr, "  viberun config --host <host>")
+	fmt.Fprintln(os.Stderr, "No host is configured yet, so viberun does not know where to connect.")
+	fmt.Fprintln(os.Stderr, "Start the shell and run setup:")
+	fmt.Fprintln(os.Stderr, "  viberun")
+	fmt.Fprintln(os.Stderr, "  setup")
+	fmt.Fprintln(os.Stderr, "Or run setup directly:")
+	fmt.Fprintln(os.Stderr, "  viberun setup <host>")
 }
 
-func maybeClearDefaultAgentOnFailure(cfg config.Config, cfgPath string, flags runFlags, app string, stderrOutput string) {
-	if strings.TrimSpace(flags.Agent) != "" {
+func maybeClearDefaultAgentOnFailure(cfg config.Config, cfgPath string, agentOverride string, app string, stderrOutput string) {
+	if strings.TrimSpace(agentOverride) != "" {
 		return
 	}
 	runner, pkg, ok := customAgentParts(cfg.AgentProvider)
@@ -2048,9 +1112,9 @@ func maybeClearDefaultAgentOnFailure(cfg config.Config, cfgPath string, flags ru
 	}
 	fmt.Fprintf(os.Stderr, "cleared default agent in %s so the next run prompts you to choose an agent\n", cfgPath)
 	if strings.TrimSpace(app) != "" {
-		fmt.Fprintf(os.Stderr, "test the agent locally: viberun %s shell, then run: %s %s --help\n", app, runner, pkg)
+		fmt.Fprintf(os.Stderr, "test the agent locally: viberun, then `vibe %s`, then run: %s %s --help\n", app, runner, pkg)
 	}
-	fmt.Fprintf(os.Stderr, "then retry with --agent %s:%s or set it as default with: viberun config --agent %s:%s\n", runner, pkg, runner, pkg)
+	fmt.Fprintf(os.Stderr, "set it as default with: config set agent %s:%s\n", runner, pkg)
 }
 
 func versionString() string {

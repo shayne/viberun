@@ -9,28 +9,31 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/shayne/viberun/internal/clipboard"
 	"github.com/shayne/viberun/internal/mux"
 	"github.com/shayne/viberun/internal/muxrpc"
 	"github.com/shayne/viberun/internal/target"
-	"golang.org/x/term"
 )
 
 func runInteractiveMuxSession(resolved target.Resolved, gateway *gatewayClient, stream *mux.Stream, outputTail *tailBuffer) error {
 	if stream == nil {
 		return fmt.Errorf("missing mux stream")
 	}
-	fd := int(os.Stdin.Fd())
-	state, err := term.MakeRaw(fd)
+	termIO, err := openInteractiveTerminal()
 	if err != nil {
 		return err
 	}
-	defer func() {
-		_ = term.Restore(fd, state)
-	}()
+	defer termIO.Restore()
+	flushInputBuffer(termIO.input)
+	started := time.Now()
 
 	stopResize := startMuxResizeWatcher(stream)
+
+	stopInput := make(chan struct{})
+	inputDone := startMuxInputPump(resolved, gateway, stream, stopInput, termIO.input)
 
 	copyDone := make(chan struct{})
 	go func() {
@@ -42,32 +45,21 @@ func runInteractiveMuxSession(resolved target.Resolved, gateway *gatewayClient, 
 		close(copyDone)
 	}()
 
-	go func() {
-		buf := make([]byte, 256)
-		for {
-			n, readErr := os.Stdin.Read(buf)
-			writeFailed := false
-			if n > 0 {
-				for i := 0; i < n; i++ {
-					if buf[i] == 0x16 {
-						handleClipboardImagePasteMux(resolved, gateway, stream)
-						continue
-					}
-					if _, err := stream.Write(buf[i : i+1]); err != nil {
-						writeFailed = true
-						break
-					}
-				}
-			}
-			if readErr != nil || writeFailed {
-				break
-			}
-		}
-	}()
-
 	<-copyDone
+	close(stopInput)
+	if inputDone != nil {
+		<-inputDone
+	}
 	if stopResize != nil {
 		stopResize()
+	}
+	if outputTail != nil {
+		if time.Since(started) < 2*time.Second {
+			if tail := summarizeSessionOutput(outputTail.String()); tail != "" {
+				return fmt.Errorf("session ended immediately: %s", tail)
+			}
+			return fmt.Errorf("session ended immediately")
+		}
 	}
 	return nil
 }
@@ -108,4 +100,79 @@ func sendResizeEvent(stream *mux.Stream, rows int, cols int) {
 	}
 	payload, _ := json.Marshal(muxrpc.ResizeEvent{Rows: rows, Cols: cols})
 	_ = stream.SendMsg(payload)
+}
+
+func summarizeSessionOutput(output string) string {
+	cleaned := scrubANSI(output)
+	cleaned = strings.TrimSpace(cleaned)
+	if cleaned == "" {
+		return ""
+	}
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	const limit = 300
+	if len(cleaned) > limit {
+		cleaned = cleaned[:limit] + "..."
+	}
+	return cleaned
+}
+
+func scrubANSI(output string) string {
+	if output == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(output))
+	for i := 0; i < len(output); i++ {
+		ch := output[i]
+		if ch == 0x1b {
+			if i+1 < len(output) && output[i+1] == '[' {
+				i += 2
+				for i < len(output) {
+					if output[i] >= 0x40 && output[i] <= 0x7e {
+						break
+					}
+					i++
+				}
+				continue
+			}
+			if i+1 < len(output) && output[i+1] == ']' {
+				i += 2
+				for i < len(output) {
+					if output[i] == 0x07 {
+						break
+					}
+					if output[i] == 0x1b && i+1 < len(output) && output[i+1] == '\\' {
+						i++
+						break
+					}
+					i++
+				}
+				continue
+			}
+			if i+1 < len(output) && output[i+1] == 'P' {
+				i += 2
+				for i < len(output) {
+					if output[i] == 0x1b && i+1 < len(output) && output[i+1] == '\\' {
+						i++
+						break
+					}
+					i++
+				}
+				continue
+			}
+			if i+1 < len(output) {
+				switch output[i+1] {
+				case '(', ')', '*', '+', '-', '.', '/':
+					i++
+					continue
+				}
+			}
+			continue
+		}
+		if ch < 0x20 && ch != '\n' && ch != '\t' {
+			continue
+		}
+		b.WriteByte(ch)
+	}
+	return b.String()
 }

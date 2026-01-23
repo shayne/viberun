@@ -36,10 +36,34 @@ type setupAction struct {
 	host string
 }
 
+type appStatus string
+
+const (
+	appStatusRunning appStatus = "running"
+	appStatusStopped appStatus = "stopped"
+	appStatusUnknown appStatus = "unknown"
+)
+
+type appSummary struct {
+	Name       string
+	Status     appStatus
+	LocalURL   string
+	PublicURL  string
+	Port       int
+	Forwarded  bool
+	ForwardErr string
+}
+
+type appForward struct {
+	port  int
+	close func()
+	err   error
+}
+
 type shellActionKind int
 
 const (
-	actionRun shellActionKind = iota
+	actionVibe shellActionKind = iota
 	actionShell
 	actionDelete
 	actionProxySetup
@@ -58,35 +82,43 @@ type shellAction struct {
 }
 
 type shellState struct {
-	output            []string
-	history           []string
-	historyIdx        int
-	scope             shellScope
-	app               string
-	prevApp           string
-	apps              []string
-	appsLoaded        bool
-	appsSyncing       bool
-	appsRenderPending bool
-	preparedSession   *preparedSession
-	syncing           bool
-	pendingCmd        *pendingCommand
-	host              string
-	agent             string
-	cfg               config.Config
-	cfgPath           string
-	connState         connectionState
-	connError         string
-	bootstrapped      bool
-	setupNeeded       bool
-	setupHinted       bool
-	hostPrompt        bool
-	setupAction       *setupAction
-	shellAction       *shellAction
-	quit              bool
-	devMode           bool
-	gateway           *gatewayClient
-	gatewayHost       string
+	output             []string
+	history            []string
+	historyIdx         int
+	scope              shellScope
+	app                string
+	prevApp            string
+	apps               []appSummary
+	appsLoaded         bool
+	appsSyncing        bool
+	appsRenderPending  bool
+	preparedSession    *preparedSession
+	syncing            bool
+	pendingCmd         *pendingCommand
+	host               string
+	agent              string
+	cfg                config.Config
+	cfgPath            string
+	connState          connectionState
+	connError          string
+	bootstrapped       bool
+	setupNeeded        bool
+	setupHinted        bool
+	hostPrompt         bool
+	startupActive      bool
+	startupStage       string
+	startupRendered    bool
+	startupOutputStart int
+	startupOutputEnd   int
+	headerRendered     bool
+	setupAction        *setupAction
+	shellAction        *shellAction
+	quit               bool
+	devMode            bool
+	gateway            *gatewayClient
+	gatewayHost        string
+	appForwards        map[string]appForward
+	appsStream         *appsStream
 }
 
 func runShell() error {
@@ -104,8 +136,7 @@ func runShell() error {
 		if err != nil {
 			return err
 		}
-		m, ok := finalModel.(shellModel)
-		if ok {
+		if m, ok := finalModel.(shellModel); ok {
 			state = m.state
 		}
 		if state.quit {
@@ -139,7 +170,11 @@ func runShell() error {
 			state.preparedSession = nil
 			if err := runPreparedInteractive(state, session); err != nil {
 				state.appendOutput(fmt.Sprintf("error: %v", err))
+			} else {
+				state.clearStartupOutput()
 			}
+			flushTerminalInputBuffer()
+			state.startupRendered = true
 			state.connState = connConnecting
 			continue
 		}
@@ -148,7 +183,11 @@ func runShell() error {
 			state.shellAction = nil
 			if err := runShellAction(state, action); err != nil {
 				state.appendOutput(fmt.Sprintf("error: %v", err))
+			} else if action.kind == actionVibe || action.kind == actionShell {
+				state.clearStartupOutput()
 			}
+			flushTerminalInputBuffer()
+			state.startupRendered = true
 			state.connState = connConnecting
 			continue
 		}
@@ -172,6 +211,7 @@ func newShellState() (*shellState, error) {
 		connState:    connUnknown,
 		devMode:      isDevMode(),
 		bootstrapped: false,
+		appForwards:  map[string]appForward{},
 	}
 	state.host = strings.TrimSpace(cfg.DefaultHost)
 	state.agent = strings.TrimSpace(cfg.AgentProvider)
@@ -196,6 +236,39 @@ func (s *shellState) appendOutput(text string) {
 	for i := 0; i < trailing; i++ {
 		s.output = append(s.output, "")
 	}
+}
+
+func (s *shellState) appendStartupOutput(text string) {
+	if s == nil {
+		return
+	}
+	s.startupOutputStart = len(s.output)
+	s.appendOutput(text)
+	s.startupOutputEnd = len(s.output)
+}
+
+func (s *shellState) clearStartupOutput() {
+	if s == nil {
+		return
+	}
+	if s.startupOutputEnd <= s.startupOutputStart {
+		return
+	}
+	if s.startupOutputStart < 0 || s.startupOutputEnd > len(s.output) {
+		s.startupOutputStart = 0
+		s.startupOutputEnd = 0
+		return
+	}
+	s.output = append(s.output[:s.startupOutputStart], s.output[s.startupOutputEnd:]...)
+	s.startupOutputStart = 0
+	s.startupOutputEnd = 0
+}
+
+func (s *shellState) markHeaderRendered() {
+	if s == nil {
+		return
+	}
+	s.headerRendered = true
 }
 
 func shouldStartShell() bool {

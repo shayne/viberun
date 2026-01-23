@@ -23,8 +23,8 @@ Purpose: help users quickly use git in app containers without auto-auth.
 1) Check identity: `git config --global user.name` and `git config --global user.email`.
 2) Ask which auth path they want: **SSH agent forwarding** or **HTTPS via gh**.
 3) If SSH:
-   - From laptop: `viberun --forward-agent <app>`.
-   - For existing apps, run `viberun <app> update` to recreate the container with the agent socket mounted.
+   - From laptop: `VIBERUN_FORWARD_AGENT=1 viberun`, then `vibe <app>`.
+   - For existing apps, run `app <app>` then `update` to recreate the container with the agent socket mounted.
    - Inside container: `echo "$SSH_AUTH_SOCK"` and `ssh -T git@github.com` to verify.
 4) If HTTPS:
    - `gh auth login` (choose HTTPS when prompted).
@@ -36,5 +36,5 @@ Purpose: help users quickly use git in app containers without auto-auth.
    - Close a window: `exit`
 
 ## Notes
-- If the git identity is missing, update it locally and restart the container (or run `viberun <app> update`) so the startup config applies.
+- If the git identity is missing, update it locally and restart the container (or run `app <app>` then `update`) so the startup config applies.
 - Do not auto-auth; always ask which path the user prefers.

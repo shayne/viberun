@@ -14,6 +14,7 @@ require (
 	github.com/tailscale/depaware v0.0.0-20251001183927-9c2ad255ef3f
 	golang.design/x/clipboard v0.7.1
 	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9
+	golang.org/x/sys v0.40.0
 	golang.org/x/term v0.39.0
 )
 
@@ -45,7 +46,6 @@ require (
 	golang.org/x/mobile v0.0.0-20250606033058-a2a15c67f36f // indirect
 	golang.org/x/mod v0.25.0 // indirect
 	golang.org/x/sync v0.15.0 // indirect
-	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/text v0.26.0 // indirect
 	golang.org/x/tools v0.34.0 // indirect
 )

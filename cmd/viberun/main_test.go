@@ -11,78 +11,37 @@ import (
 	"testing"
 )
 
-func TestEnsureRunSubcommandBootstrap(t *testing.T) {
+func TestNormalizeArgsBootstrapAlias(t *testing.T) {
 	args := []string{"bootstrap", "root@5.161.202.241"}
-	got := ensureRunSubcommand(args)
-	if !reflect.DeepEqual(got, args) {
-		t.Fatalf("expected %v, got %v", args, got)
-	}
-}
-
-func TestEnsureRunSubcommandProxy(t *testing.T) {
-	args := []string{"proxy", "setup"}
-	got := ensureRunSubcommand(args)
-	if !reflect.DeepEqual(got, args) {
-		t.Fatalf("expected %v, got %v", args, got)
-	}
-}
-
-func TestEnsureRunSubcommandUsers(t *testing.T) {
-	args := []string{"users", "list"}
-	got := ensureRunSubcommand(args)
-	if !reflect.DeepEqual(got, args) {
-		t.Fatalf("expected %v, got %v", args, got)
-	}
-}
-
-func TestEnsureRunSubcommandWipe(t *testing.T) {
-	args := []string{"wipe", "-y"}
-	got := ensureRunSubcommand(args)
-	if !reflect.DeepEqual(got, args) {
-		t.Fatalf("expected %v, got %v", args, got)
-	}
-}
-
-func TestEnsureRunSubcommandDefaultRun(t *testing.T) {
-	args := []string{"myapp"}
-	want := []string{"run", "myapp"}
-	got := ensureRunSubcommand(args)
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected %v, got %v", want, got)
-	}
-}
-
-func TestEnsureRunSubcommandHelp(t *testing.T) {
-	args := []string{"help"}
-	want := []string{"--help"}
-	got := ensureRunSubcommand(normalizeArgs(args))
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected %v, got %v", want, got)
-	}
-}
-
-func TestNormalizeArgsHelpSubcommand(t *testing.T) {
-	args := []string{"help", "config"}
-	want := []string{"config", "--help"}
+	want := []string{"setup", "root@5.161.202.241"}
 	got := normalizeArgs(args)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected %v, got %v", want, got)
 	}
 }
 
-func TestEnsureRunSubcommandWithAgentFlag(t *testing.T) {
-	args := []string{"--agent", "codex", "myapp"}
-	want := []string{"run", "--agent", "codex", "myapp"}
-	got := ensureRunSubcommand(args)
+func TestNormalizeArgsHelpSubcommand(t *testing.T) {
+	args := []string{"help", "setup"}
+	want := []string{"setup", "--help"}
+	got := normalizeArgs(args)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected %v, got %v", want, got)
 	}
 }
 
-func TestEnsureRunSubcommandWithForwardAgentFlag(t *testing.T) {
-	args := []string{"-A", "myapp"}
-	want := []string{"run", "-A", "myapp"}
-	got := ensureRunSubcommand(args)
+func TestNormalizeArgsHelpUnknown(t *testing.T) {
+	args := []string{"help", "config"}
+	want := []string{"--help"}
+	got := normalizeArgs(args)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+}
+
+func TestNormalizeArgsVersion(t *testing.T) {
+	args := []string{"version"}
+	want := []string{"--version"}
+	got := normalizeArgs(args)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected %v, got %v", want, got)
 	}
@@ -199,10 +158,10 @@ func TestPrintURLSummary(t *testing.T) {
 	if !strings.Contains(out, "Commands:") {
 		t.Fatalf("expected commands header in output: %s", out)
 	}
-	if !strings.Contains(out, "viberun myapp url --make-public") {
+	if !strings.Contains(out, "app myapp url public") {
 		t.Fatalf("expected commands list in output: %s", out)
 	}
-	if !strings.Contains(out, "viberun myapp url --require-login") {
+	if !strings.Contains(out, "app myapp url private") {
 		t.Fatalf("expected commands list in output: %s", out)
 	}
 }

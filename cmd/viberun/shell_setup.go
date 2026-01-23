@@ -150,10 +150,10 @@ func runShellSetup(state *shellState, action setupAction) (bool, string, error) 
 	cmd.Stderr = os.Stderr
 
 	if skipBootstrap {
-		ui.Step("Run bootstrap")
+		ui.Step("Install viberun")
 		ui.Done("skipped")
 	} else {
-		ui.Step("Run bootstrap")
+		ui.Step("Install viberun")
 		ui.Suspend()
 		if err := cmd.Run(); err != nil {
 			ui.Resume()
@@ -172,7 +172,7 @@ func runShellSetup(state *shellState, action setupAction) (bool, string, error) 
 		cfg.DefaultHost = hostArg
 		if err := config.Save(cfgPath, cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "Setup complete, but failed to save default host: %v\n", err)
-			fmt.Fprintf(os.Stderr, "Run `viberun config --host %s` to set it manually.\n", hostArg)
+			fmt.Fprintf(os.Stderr, "Run `viberun`, then `config set host %s` to set it manually.\n", hostArg)
 		} else {
 			state.cfg = cfg
 			state.host = hostArg
