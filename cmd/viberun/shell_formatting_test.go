@@ -112,11 +112,14 @@ func TestViewNoOutputShowsBlankLineBeforePrompt(t *testing.T) {
 	model := newTestModel(state)
 	view := model.View()
 	lines := strings.Split(view, "\n")
-	if len(lines) < 3 {
-		t.Fatalf("expected at least 3 lines, got %d: %q", len(lines), view)
+	if len(lines) < 4 {
+		t.Fatalf("expected at least 4 lines, got %d: %q", len(lines), view)
 	}
-	if lines[1] != "" {
-		t.Fatalf("expected blank line between header and prompt, got %q", lines[1])
+	if lines[0] != "" {
+		t.Fatalf("expected blank line above header, got %q", lines[0])
+	}
+	if lines[2] != "" {
+		t.Fatalf("expected blank line between header and prompt, got %q", lines[2])
 	}
 	prefix := renderPromptPrefix(state)
 	if !strings.HasPrefix(lines[len(lines)-1], prefix) {
@@ -131,14 +134,17 @@ func TestViewSeparatorAfterClearSpacing(t *testing.T) {
 	model := newTestModel(state)
 	view := model.View()
 	lines := strings.Split(view, "\n")
-	if len(lines) < 4 {
-		t.Fatalf("expected at least 4 lines, got %d: %q", len(lines), view)
+	if len(lines) < 5 {
+		t.Fatalf("expected at least 5 lines, got %d: %q", len(lines), view)
 	}
-	if lines[1] != "" {
-		t.Fatalf("expected blank line after header, got %q", lines[1])
+	if lines[0] != "" {
+		t.Fatalf("expected blank line above header, got %q", lines[0])
 	}
-	if !strings.HasPrefix(lines[2], prefix) {
-		t.Fatalf("expected first body line to start with %q, got %q", prefix, lines[2])
+	if lines[2] != "" {
+		t.Fatalf("expected blank line after header, got %q", lines[2])
+	}
+	if !strings.HasPrefix(lines[3], prefix) {
+		t.Fatalf("expected first body line to start with %q, got %q", prefix, lines[3])
 	}
 }
 

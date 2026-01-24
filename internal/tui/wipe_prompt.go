@@ -29,7 +29,7 @@ func PromptWipeConfirm(in io.Reader, out io.Writer) error {
 				}),
 		),
 	)
-	form.WithInput(in).WithOutput(out).WithTheme(huh.ThemeCharm())
+	form.WithInput(in).WithOutput(out).WithTheme(promptTheme(out))
 	if err := form.Run(); err != nil {
 		return err
 	}
@@ -54,7 +54,7 @@ func PromptWipeDecision(in io.Reader, out io.Writer, host string) (bool, error) 
 				Value(&value),
 		),
 	)
-	form.WithInput(in).WithOutput(out).WithTheme(huh.ThemeCharm())
+	form.WithInput(in).WithOutput(out).WithTheme(promptTheme(out))
 	if err := form.Run(); err != nil {
 		return false, err
 	}

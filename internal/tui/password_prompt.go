@@ -32,7 +32,7 @@ func PromptPassword(in io.Reader, out io.Writer, title string) (string, error) {
 				}),
 		),
 	)
-	form.WithInput(in).WithOutput(out).WithTheme(huh.ThemeCharm())
+	form.WithInput(in).WithOutput(out).WithTheme(promptTheme(out))
 	if err := form.Run(); err != nil {
 		return "", err
 	}

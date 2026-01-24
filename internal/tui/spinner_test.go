@@ -14,7 +14,8 @@ func TestSpinnerOptions(t *testing.T) {
 	buf := &bytes.Buffer{}
 	frames := []string{"*"}
 	interval := 10 * time.Millisecond
-	s := NewSpinner(buf, WithFrames(frames), WithInterval(interval), WithHideCursor(true), WithColor(Colorizer{Enabled: true}, ColorGreen))
+	code := "\x1b[32m"
+	s := NewSpinner(buf, WithFrames(frames), WithInterval(interval), WithHideCursor(true), WithColor(Colorizer{Enabled: true}, code))
 	if len(s.frames) != 1 || s.frames[0] != "*" {
 		t.Fatalf("unexpected frames: %v", s.frames)
 	}
@@ -24,7 +25,7 @@ func TestSpinnerOptions(t *testing.T) {
 	if !s.hideCursor {
 		t.Fatalf("expected hideCursor true")
 	}
-	if !s.color.Enabled || s.frameColor != ColorGreen {
+	if !s.color.Enabled || s.frameColor != code {
 		t.Fatalf("unexpected color settings")
 	}
 }

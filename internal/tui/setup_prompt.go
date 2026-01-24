@@ -28,7 +28,7 @@ func PromptSetupHost(in io.Reader, out io.Writer, defaultHost string) (string, e
 				}),
 		),
 	)
-	form.WithInput(in).WithOutput(out).WithTheme(huh.ThemeCharm())
+	form.WithInput(in).WithOutput(out).WithTheme(promptTheme(out))
 	if err := form.Run(); err != nil {
 		return "", err
 	}
@@ -50,7 +50,7 @@ func PromptSetupRerun(in io.Reader, out io.Writer, host string) (bool, error) {
 				Value(&value),
 		),
 	)
-	form.WithInput(in).WithOutput(out).WithTheme(huh.ThemeCharm())
+	form.WithInput(in).WithOutput(out).WithTheme(promptTheme(out))
 	if err := form.Run(); err != nil {
 		return false, err
 	}

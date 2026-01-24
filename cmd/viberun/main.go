@@ -36,6 +36,7 @@ import (
 	"github.com/shayne/viberun/internal/sshcmd"
 	"github.com/shayne/viberun/internal/target"
 	"github.com/shayne/viberun/internal/tui"
+	"github.com/shayne/viberun/internal/tui/theme"
 	"github.com/shayne/yargs"
 )
 
@@ -831,22 +832,22 @@ type commandLine struct {
 }
 
 func newURLStyler(out io.Writer) urlStyler {
-	theme := shellThemeForOutput(out)
-	if !theme.Enabled {
+	selected := theme.ForOutput(out)
+	if !selected.Enabled {
 		return urlStyler{}
 	}
 	return urlStyler{
 		enabled:       true,
-		labelStyle:    theme.Muted,
-		valueStyle:    theme.Value,
-		headerStyle:   theme.HelpHeader,
-		commandStyle:  lipgloss.NewStyle(),
-		commentStyle:  theme.Muted,
-		linkStyle:     theme.Link,
-		publicStyle:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#1F7A1F", Dark: "#7EE787"}),
-		privateStyle:  lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#9A6B00", Dark: "#F2C14E"}),
-		disabledStyle: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#6E6E6E", Dark: "#9CA3AF"}),
-		ipStyle:       lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#1F7A1F", Dark: "#7EE787"}),
+		labelStyle:    selected.URL.Label,
+		valueStyle:    selected.URL.Value,
+		headerStyle:   selected.URL.Header,
+		commandStyle:  selected.URL.Command,
+		commentStyle:  selected.URL.Comment,
+		linkStyle:     selected.URL.Link,
+		publicStyle:   selected.URL.Public,
+		privateStyle:  selected.URL.Private,
+		disabledStyle: selected.URL.Disabled,
+		ipStyle:       selected.URL.IP,
 	}
 }
 
@@ -986,24 +987,6 @@ func (s *loadOutputStyler) writeLine(line string) error {
 	return err
 }
 
-func wantPrettyOutput(out io.Writer) bool {
-	if os.Getenv("NO_COLOR") != "" {
-		return false
-	}
-	termValue := os.Getenv("TERM")
-	if termValue == "" || termValue == "dumb" {
-		return false
-	}
-	if ttyAware, ok := out.(interface{ IsTTY() bool }); ok {
-		return ttyAware.IsTTY()
-	}
-	file, ok := out.(*os.File)
-	if !ok {
-		return false
-	}
-	return term.IsTerminal(int(file.Fd()))
-}
-
 func runUsersEditor(gateway *gatewayClient, app string, info proxyInfo) (bool, error) {
 	primary := strings.TrimSpace(info.PrimaryUser)
 	secondaryOptions := make([]huh.Option[string], 0, len(info.Users))
@@ -1038,7 +1021,7 @@ func runUsersEditor(gateway *gatewayClient, app string, info proxyInfo) (bool, e
 				Value(&selected),
 		),
 	)
-	form.WithInput(os.Stdin).WithOutput(os.Stdout).WithTheme(huh.ThemeCharm())
+	form.WithInput(os.Stdin).WithOutput(os.Stdout).WithTheme(tui.PromptTheme(os.Stdout))
 	if err := form.Run(); err != nil {
 		return false, err
 	}

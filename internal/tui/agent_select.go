@@ -44,7 +44,7 @@ func SelectDefaultAgent(in io.Reader, out io.Writer) (string, error) {
 		),
 	)
 
-	form.WithInput(in).WithOutput(out).WithTheme(huh.ThemeCharm())
+	form.WithInput(in).WithOutput(out).WithTheme(promptTheme(out))
 
 	if err := form.Run(); err != nil {
 		return "", err
@@ -83,7 +83,7 @@ func promptCustomRunner(in io.Reader, out io.Writer, runner string) (string, err
 				}),
 		),
 	)
-	form.WithInput(in).WithOutput(out).WithTheme(huh.ThemeCharm())
+	form.WithInput(in).WithOutput(out).WithTheme(promptTheme(out))
 	if err := form.Run(); err != nil {
 		return "", err
 	}

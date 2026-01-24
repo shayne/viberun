@@ -43,7 +43,7 @@ func PromptProxyAuth(in io.Reader, out io.Writer, defaultUser string) (string, s
 				}),
 		),
 	)
-	form.WithInput(in).WithOutput(out).WithTheme(huh.ThemeCharm())
+	form.WithInput(in).WithOutput(out).WithTheme(promptTheme(out))
 	if err := form.Run(); err != nil {
 		return "", "", err
 	}

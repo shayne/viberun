@@ -36,7 +36,7 @@ func NewProgress(out io.Writer, enabled bool, action, host string) *Progress {
 		action:  strings.TrimSpace(action),
 		host:    strings.TrimSpace(host),
 		plain:   newPlainProgress(out, action, host),
-		color:   NewColorizer(enabled),
+		color:   NewColorizer(out, enabled),
 	}
 }
 
@@ -166,7 +166,7 @@ func (p *Progress) Warn(msg string) {
 	}
 	p.stopSpinner(true)
 	if p.enabled {
-		fmt.Fprintln(p.out, p.color.Wrap(ColorYellow, msg))
+		fmt.Fprintln(p.out, p.color.Wrap(p.color.ansi.Warning, msg))
 		return
 	}
 	p.plain.Warn(msg)
@@ -189,7 +189,7 @@ func (p *Progress) newSpinner(text string) *Spinner {
 	sp := NewSpinner(p.out,
 		WithFrames(DefaultFrames),
 		WithInterval(120*time.Millisecond),
-		WithColor(p.color, ColorYellow),
+		WithColor(p.color, p.color.ansi.Spinner),
 		WithHideCursor(true),
 	)
 	sp.Start(text)
@@ -212,9 +212,9 @@ func (p *Progress) printStatus(status, name, detail string) {
 	label := status
 	switch status {
 	case "OK":
-		label = p.color.Wrap(ColorGreen, "✔")
+		label = p.color.Wrap(p.color.ansi.Success, "✔")
 	case "ERR":
-		label = p.color.Wrap(ColorRed, "✖")
+		label = p.color.Wrap(p.color.ansi.Error, "✖")
 	}
 	line := fmt.Sprintf("%s %s", label, name)
 	if detail != "" {

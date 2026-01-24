@@ -47,7 +47,7 @@ func promptProxyDomain(in io.Reader, out io.Writer, prefix string, defaultDomain
 		),
 	)
 
-	form.WithInput(in).WithOutput(out).WithTheme(huh.ThemeCharm())
+	form.WithInput(in).WithOutput(out).WithTheme(promptTheme(out))
 	if err := form.Run(); err != nil {
 		return "", err
 	}

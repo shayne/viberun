@@ -14,6 +14,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/shayne/viberun/internal/config"
+	"github.com/shayne/viberun/internal/tui/theme"
 )
 
 type shellScope int
@@ -111,6 +112,7 @@ type shellState struct {
 	startupOutputStart int
 	startupOutputEnd   int
 	headerRendered     bool
+	clearOnStart       bool
 	setupAction        *setupAction
 	shellAction        *shellAction
 	quit               bool
@@ -131,7 +133,10 @@ func runShell() error {
 	}()
 	for {
 		model := newShellModel(state)
-		program := tea.NewProgram(model)
+		// Keep raw mode enabled by wrapping stdin with a term.File-compatible filter.
+		input := newOSCFilteringTTY(os.Stdin)
+		theme.SetOSCReadHook(input.WaitOSC)
+		program := tea.NewProgram(model, tea.WithInput(input))
 		finalModel, err := program.Run()
 		if err != nil {
 			return err
@@ -170,10 +175,9 @@ func runShell() error {
 			state.preparedSession = nil
 			if err := runPreparedInteractive(state, session); err != nil {
 				state.appendOutput(fmt.Sprintf("error: %v", err))
-			} else {
-				state.clearStartupOutput()
 			}
 			flushTerminalInputBuffer()
+			state.clearOnStart = true
 			state.startupRendered = true
 			state.connState = connConnecting
 			continue
@@ -183,10 +187,9 @@ func runShell() error {
 			state.shellAction = nil
 			if err := runShellAction(state, action); err != nil {
 				state.appendOutput(fmt.Sprintf("error: %v", err))
-			} else if action.kind == actionVibe || action.kind == actionShell {
-				state.clearStartupOutput()
 			}
 			flushTerminalInputBuffer()
+			state.clearOnStart = true
 			state.startupRendered = true
 			state.connState = connConnecting
 			continue
@@ -245,30 +248,6 @@ func (s *shellState) appendStartupOutput(text string) {
 	s.startupOutputStart = len(s.output)
 	s.appendOutput(text)
 	s.startupOutputEnd = len(s.output)
-}
-
-func (s *shellState) clearStartupOutput() {
-	if s == nil {
-		return
-	}
-	if s.startupOutputEnd <= s.startupOutputStart {
-		return
-	}
-	if s.startupOutputStart < 0 || s.startupOutputEnd > len(s.output) {
-		s.startupOutputStart = 0
-		s.startupOutputEnd = 0
-		return
-	}
-	s.output = append(s.output[:s.startupOutputStart], s.output[s.startupOutputEnd:]...)
-	s.startupOutputStart = 0
-	s.startupOutputEnd = 0
-}
-
-func (s *shellState) markHeaderRendered() {
-	if s == nil {
-		return
-	}
-	s.headerRendered = true
 }
 
 func shouldStartShell() bool {
