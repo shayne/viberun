@@ -7,6 +7,7 @@
 - 2026-01-20: Avoid `os.Exit` in the codebase; bubble errors up and let `main()` return.
 - 2026-01-22: Treat tool/package versions as time-sensitive; verify “latest” via mise/brew or search instead of memory (knowledge cutoff 2024).
 - 2026-01-22: Default remote operations to the gateway mux; use SSH only for bootstrap and gateway session start.
+- 2026-01-24: Use the charm.land v2 TUI stack; do not add v1 Charm dependencies.
 
 ## Project Structure & Module Organization
 - `cmd/`: Go entrypoints (`viberun`, `viberun-server`). Main CLI and host-side server logic live here.
