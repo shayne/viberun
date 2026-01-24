@@ -28,10 +28,13 @@ RUN apt-get update \
     iproute2 \
     iputils-ping \
     lsof \
+    locate \
     ncurses-bin \
     ncurses-term \
     nano \
+    openssl \
     openssh-client \
+    php \
     procps \
     unzip \
     ripgrep \
