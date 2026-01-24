@@ -21,6 +21,10 @@ func closeShellGateway(state *shellState) {
 		}
 		state.appsStream = nil
 	}
+	if state.forwarder != nil {
+		state.forwarder.Stop()
+		state.forwarder = nil
+	}
 	if state.appForwards != nil {
 		for name, forward := range state.appForwards {
 			if forward.close != nil {

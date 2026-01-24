@@ -339,6 +339,35 @@ func runShellDelete(state *shellState, appArg string) error {
 	return nil
 }
 
+func runDeleteConfirmed(state *shellState, appArg string) (string, error) {
+	if state == nil {
+		return "", errors.New("missing shell state")
+	}
+	cfg := state.cfg
+	if state.host != "" {
+		cfg.DefaultHost = state.host
+	}
+	resolved, err := target.Resolve(strings.TrimSpace(appArg), cfg)
+	if err != nil {
+		return "", err
+	}
+	gateway, cleanup, err := gatewayForResolvedHost(state, resolved.Host)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	remoteArgs := buildAppCommandArgs(strings.TrimSpace(state.agent), resolved.App, []string{"delete"})
+	output, err := gateway.command(remoteArgs, "", nil)
+	if err != nil {
+		return "", err
+	}
+	output = strings.TrimRight(output, "\n")
+	if output == "" {
+		output = fmt.Sprintf("Deleted app %s", resolved.App)
+	}
+	return output, nil
+}
+
 func runShellProxySetup(state *shellState, hostArg string) error {
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return errors.New("proxy setup requires a TTY")

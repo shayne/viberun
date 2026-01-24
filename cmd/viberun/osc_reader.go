@@ -101,7 +101,7 @@ func (o *oscFilteringReader) filter(in []byte) []byte {
 	if !o.oscEnabled.Load() {
 		o.state = oscFilterIdle
 		o.oscBuf = o.oscBuf[:0]
-		return in
+		return filterOSCSequences(in)
 	}
 	out := make([]byte, 0, len(in))
 	for _, b := range in {
@@ -146,6 +146,39 @@ func (o *oscFilteringReader) filter(in []byte) []byte {
 		default:
 			o.state = oscFilterIdle
 		}
+	}
+	return out
+}
+
+func filterOSCSequences(in []byte) []byte {
+	if len(in) == 0 {
+		return in
+	}
+	out := make([]byte, 0, len(in))
+	i := 0
+	for i < len(in) {
+		if in[i] == 0x1b && i+1 < len(in) && in[i+1] == ']' {
+			j := i + 2
+			for j < len(in) {
+				if in[j] == '\a' {
+					j++
+					break
+				}
+				if in[j] == 0x1b && j+1 < len(in) && in[j+1] == '\\' {
+					j += 2
+					break
+				}
+				j++
+			}
+			if j <= i+2 {
+				i++
+				continue
+			}
+			i = j
+			continue
+		}
+		out = append(out, in[i])
+		i++
 	}
 	return out
 }

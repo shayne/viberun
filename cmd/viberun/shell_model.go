@@ -154,6 +154,16 @@ func (m shellModel) Init() tea.Cmd {
 	if m.state.startupActive {
 		cmds = append(cmds, m.promptSpin.Tick)
 	}
+	if m.state.resumeAfterAction && gatewayReady(m.state) {
+		m.state.resumeAfterAction = false
+		startForwardManager(m.state)
+		m.state.appsSyncing = true
+		if cmd := startAppsStreamCmd(m.state); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		cmds = append(cmds, loadAppsCmd(m.state, false))
+		return tea.Batch(cmds...)
+	}
 	if !m.state.hostPrompt {
 		m.state.appsLoaded = false
 		m.state.apps = nil
@@ -205,6 +215,24 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			line := strings.TrimSpace(m.input.Value())
 			m.input.SetValue("")
+			if m.state.confirmDeleteApp != "" {
+				app := m.state.confirmDeleteApp
+				m.state.confirmDeleteApp = ""
+				response := strings.ToLower(strings.TrimSpace(line))
+				promptLine := confirmDeletePrompt(m.state)
+				if promptLine == "" {
+					promptLine = fmt.Sprintf("Delete %s and all snapshots? [y/N]: ", app)
+				}
+				m.state.appendOutput(promptLine + strings.TrimSpace(line))
+				if response == "y" || response == "yes" {
+					m.busy = true
+					return m, m.startSpinner(runAsync(func() (string, error) {
+						return runDeleteConfirmed(m.state, app)
+					}))
+				}
+				m.state.appendOutput("delete cancelled")
+				return m, m.maybeRefreshTheme()
+			}
 			if line == "" {
 				// Empty Enter should emit a prompt line like a real shell.
 				m.appendCommandLine("")
@@ -327,6 +355,7 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.state.setupNeeded = false
+		startForwardManager(m.state)
 		m.state.startupStage = "Syncing apps..."
 		return m, startupAppsCmd(m.state)
 	case startupAppsMsg:
@@ -346,6 +375,10 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.state.appendOutput(fmt.Sprintf("error: %v", msg.err))
 			return m, nil
+		}
+		startForwardManager(m.state)
+		if m.state.forwarder != nil {
+			m.state.forwarder.syncFromSummaries(msg.apps)
 		}
 		m.state.apps = applyAppSummaries(m.state, msg.apps)
 		m.state.appsLoaded = true
@@ -426,6 +459,10 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.state.setupNeeded = false
+		startForwardManager(m.state)
+		if m.state.forwarder != nil {
+			m.state.forwarder.syncFromSummaries(msg.apps)
+		}
 		m.state.apps = applyAppSummaries(m.state, msg.apps)
 		m.state.appsLoaded = true
 		m.state.appsSyncing = false
@@ -501,6 +538,9 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.state.appsRenderPending = false
 			return m, nil
+		}
+		if m.state.forwarder != nil {
+			m.state.forwarder.syncFromSummaries(msg.apps)
 		}
 		m.state.apps = applyAppSummaries(m.state, msg.apps)
 		m.state.appsLoaded = true
@@ -830,6 +870,9 @@ func renderHeader(state *shellState) string {
 }
 
 func renderPrompt(m shellModel) string {
+	if m.state != nil && m.state.confirmDeleteApp != "" {
+		return confirmDeletePrompt(m.state) + m.input.View()
+	}
 	return renderPromptPrefix(m.state) + m.input.View() + " "
 }
 

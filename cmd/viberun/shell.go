@@ -113,6 +113,8 @@ type shellState struct {
 	startupOutputEnd   int
 	headerRendered     bool
 	clearOnStart       bool
+	resumeAfterAction  bool
+	confirmDeleteApp   string
 	setupAction        *setupAction
 	shellAction        *shellAction
 	quit               bool
@@ -120,6 +122,7 @@ type shellState struct {
 	gateway            *gatewayClient
 	gatewayHost        string
 	appForwards        map[string]appForward
+	forwarder          *forwardManager
 	appsStream         *appsStream
 }
 
@@ -178,8 +181,7 @@ func runShell() error {
 			}
 			flushTerminalInputBuffer()
 			state.clearOnStart = true
-			state.startupRendered = true
-			state.connState = connConnecting
+			state.resumeAfterAction = true
 			continue
 		}
 		if state.shellAction != nil {
@@ -189,12 +191,34 @@ func runShell() error {
 				state.appendOutput(fmt.Sprintf("error: %v", err))
 			}
 			flushTerminalInputBuffer()
-			state.clearOnStart = true
-			state.startupRendered = true
-			state.connState = connConnecting
+			state.clearOnStart = actionClearsTerminal(action.kind)
+			if actionResumesShell(action.kind) {
+				state.resumeAfterAction = true
+			} else {
+				state.startupRendered = true
+				state.connState = connConnecting
+			}
 			continue
 		}
 		return nil
+	}
+}
+
+func actionClearsTerminal(kind shellActionKind) bool {
+	switch kind {
+	case actionVibe, actionShell:
+		return true
+	default:
+		return false
+	}
+}
+
+func actionResumesShell(kind shellActionKind) bool {
+	switch kind {
+	case actionVibe, actionShell, actionDelete:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -248,6 +272,13 @@ func (s *shellState) appendStartupOutput(text string) {
 	s.startupOutputStart = len(s.output)
 	s.appendOutput(text)
 	s.startupOutputEnd = len(s.output)
+}
+
+func confirmDeletePrompt(state *shellState) string {
+	if state == nil || strings.TrimSpace(state.confirmDeleteApp) == "" {
+		return ""
+	}
+	return fmt.Sprintf("Delete %s and all snapshots? [y/N]: ", state.confirmDeleteApp)
 }
 
 func shouldStartShell() bool {

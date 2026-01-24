@@ -360,7 +360,8 @@ func dispatchGlobalCommand(state *shellState, cmd parsedCommand) (string, tea.Cm
 		if !appExists(state, cmd.args[0]) {
 			return renderShellError(fmt.Sprintf("error: app %q not found", cmd.args[0])), nil
 		}
-		return "", shellActionCmd(shellAction{kind: actionDelete, app: cmd.args[0]})
+		beginDeletePrompt(state, cmd.args[0])
+		return "", nil
 	case "config":
 		return handleConfigShell(state, cmd.args)
 	case "setup":
@@ -1040,6 +1041,17 @@ func loadAppsCmd(state *shellState, render bool) tea.Cmd {
 		summaries, err := buildAppSummaries(gateway, appSnapshotsFromNames(apps), proxyEnabled)
 		return appsLoadedMsg{apps: summaries, err: err, render: render, fromAppsCmd: render}
 	}
+}
+
+func beginDeletePrompt(state *shellState, app string) {
+	if state == nil {
+		return
+	}
+	app = strings.TrimSpace(app)
+	if app == "" {
+		return
+	}
+	state.confirmDeleteApp = app
 }
 
 func parseUsersArgs(args []string) (string, string, error) {

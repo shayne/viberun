@@ -138,89 +138,16 @@ func buildAppSummaries(gateway *gatewayClient, apps []appSnapshot, proxyEnabled 
 }
 
 func applyAppSummaries(state *shellState, summaries []appSummary) []appSummary {
-	return syncAppForwards(state, summaries)
-}
-
-func syncAppForwards(state *shellState, summaries []appSummary) []appSummary {
 	if state == nil {
 		return summaries
 	}
-	if state.appForwards == nil {
-		state.appForwards = map[string]appForward{}
-	}
-	localHost := isLocalHost(state.gatewayHost)
-	keep := map[string]bool{}
 	updated := make([]appSummary, 0, len(summaries))
 	for _, summary := range summaries {
 		name := strings.TrimSpace(summary.Name)
 		if name == "" {
 			continue
 		}
-		keep[name] = true
-		if localHost {
-			summary.Forwarded = summary.LocalURL != ""
-			summary.ForwardErr = ""
-			updated = append(updated, summary)
-			continue
-		}
-		if summary.Port <= 0 || summary.LocalURL == "" {
-			if summary.ForwardErr == "" {
-				summary.ForwardErr = "unavailable"
-			}
-			updated = append(updated, summary)
-			continue
-		}
-		forward, ok := state.appForwards[name]
-		if ok && forward.port == summary.Port && forward.err == nil {
-			summary.Forwarded = true
-			updated = append(updated, summary)
-			continue
-		}
-		if ok && forward.close != nil {
-			forward.close()
-		}
-		if state.gateway == nil {
-			if summary.ForwardErr == "" {
-				summary.ForwardErr = "unavailable"
-			}
-			state.appForwards[name] = appForward{port: summary.Port, err: errors.New("gateway not connected")}
-			updated = append(updated, summary)
-			continue
-		}
-		if err := ensureLocalPortAvailable(summary.Port); err != nil {
-			summary.ForwardErr = forwardErrorMessage(err)
-			state.appForwards[name] = appForward{port: summary.Port, err: err}
-			updated = append(updated, summary)
-			continue
-		}
-		closeFn, err := startLocalForwardMux(state.gateway, summary.Port)
-		if err != nil {
-			summary.ForwardErr = forwardErrorMessage(err)
-			state.appForwards[name] = appForward{port: summary.Port, err: err}
-			updated = append(updated, summary)
-			continue
-		}
-		summary.Forwarded = true
-		summary.ForwardErr = ""
-		state.appForwards[name] = appForward{port: summary.Port, close: closeFn}
-		updated = append(updated, summary)
-	}
-	for name, forward := range state.appForwards {
-		if keep[name] {
-			continue
-		}
-		if forward.close != nil {
-			forward.close()
-		}
-		delete(state.appForwards, name)
-	}
-	if localHost {
-		for name, forward := range state.appForwards {
-			if forward.close != nil {
-				forward.close()
-			}
-			delete(state.appForwards, name)
-		}
+		updated = append(updated, applyForwardStatus(state, summary))
 	}
 	return updated
 }
@@ -240,15 +167,15 @@ func applyForwardStatus(state *shellState, summary appSummary) appSummary {
 		}
 		return summary
 	}
-	if state.appForwards != nil {
-		if forward, ok := state.appForwards[summary.Name]; ok && forward.port == summary.Port {
-			if forward.err == nil {
+	if state.forwarder != nil {
+		if ok, err, found := state.forwarder.status(summary.Name, summary.Port); found {
+			if ok {
 				summary.Forwarded = true
 				summary.ForwardErr = ""
 				return summary
 			}
 			if summary.ForwardErr == "" {
-				summary.ForwardErr = forwardErrorMessage(forward.err)
+				summary.ForwardErr = forwardErrorMessage(err)
 			}
 			return summary
 		}

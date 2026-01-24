@@ -34,10 +34,25 @@ func startAppsStream(gateway *gatewayClient) (*appsStream, error) {
 	updates := make(chan appsEvent, 1)
 	go func() {
 		defer close(updates)
+		send := func(event appsEvent) {
+			select {
+			case updates <- event:
+				return
+			default:
+			}
+			select {
+			case <-updates:
+			default:
+			}
+			select {
+			case updates <- event:
+			default:
+			}
+		}
 		for {
 			msg, err := stream.ReceiveMsg()
 			if err != nil {
-				updates <- appsEvent{err: err}
+				send(appsEvent{err: err})
 				return
 			}
 			var event muxrpc.AppsEvent
@@ -48,7 +63,7 @@ func startAppsStream(gateway *gatewayClient) (*appsStream, error) {
 			for _, app := range event.Apps {
 				apps = append(apps, appSnapshot{Name: app.Name, Port: app.Port})
 			}
-			updates <- appsEvent{apps: apps}
+			send(appsEvent{apps: apps})
 		}
 	}()
 	closeFn := func() {
