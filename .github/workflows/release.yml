@@ -116,12 +116,15 @@ jobs:
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           export VERSION COMMIT BUILD_DATE
           mise run release:build-packages
+      - name: Package npm artifact
+        run: |
+          tar -czf dist/npm.tgz -C dist npm
       - name: Upload package artifacts
         uses: actions/upload-artifact@v4
         with:
           name: package-artifacts
           path: |
-            dist/npm
+            dist/npm.tgz
             dist/pypi
           if-no-files-found: error
 
@@ -141,6 +144,20 @@ jobs:
         with:
           name: package-artifacts
           path: dist
+      - name: Unpack npm artifact
+        run: tar -xzf dist/npm.tgz -C dist
+      - name: Verify npm vendor binaries are executable
+        run: |
+          failed=0
+          while IFS= read -r -d '' file; do
+            if [ ! -x "$file" ]; then
+              echo "not executable: $file" >&2
+              failed=1
+            fi
+          done < <(find dist/npm/vendor -type f -name 'viberun*' -print0)
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
