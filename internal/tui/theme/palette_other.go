@@ -7,6 +7,13 @@
 
 package theme
 
+import "time"
+
+// SetOSCReadHook is a no-op on non-UNIX platforms.
+func SetOSCReadHook(h func(code int, timeout time.Duration) (string, error)) {
+	_ = h
+}
+
 func queryDefaultColors() Palette {
 	return Palette{}
 }
