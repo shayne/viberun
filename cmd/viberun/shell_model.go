@@ -179,6 +179,7 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyCtrlL {
 			// Clear screen: keep header + prompt, drop scrollback.
 			m.state.output = nil
+			m.state.headerRendered = false
 			return m, tea.ClearScreen
 		}
 		if msg.Type == tea.KeyCtrlD {
@@ -479,7 +480,11 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.state.appsSyncing = true
-		return m, refreshAppsFromStreamCmd(m.state, msg.apps)
+		cmds := []tea.Cmd{refreshAppsFromStreamCmd(m.state, msg.apps)}
+		if m.state.appsStream != nil {
+			cmds = append(cmds, listenAppsStreamCmd(m.state.appsStream))
+		}
+		return m, tea.Batch(cmds...)
 	case appsLoadedMsg:
 		m.state.appsSyncing = false
 		m.busy = false
