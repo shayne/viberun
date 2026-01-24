@@ -8,43 +8,23 @@ import (
 	"errors"
 	"io"
 	"strings"
-
-	"github.com/charmbracelet/huh"
 )
 
 func PromptProxyAuth(in io.Reader, out io.Writer, defaultUser string) (string, string, error) {
-	username := strings.TrimSpace(defaultUser)
-	password := ""
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title("Primary username").
-				Prompt("> ").
-				Value(&username).
-				Validate(func(value string) error {
-					if strings.TrimSpace(value) == "" {
-						return errors.New("username is required")
-					}
-					if strings.ContainsAny(value, " \t") {
-						return errors.New("username must not contain spaces")
-					}
-					return nil
-				}),
-			huh.NewInput().
-				Title("Password").
-				Prompt("> ").
-				EchoMode(huh.EchoModePassword).
-				Value(&password).
-				Validate(func(value string) error {
-					if strings.TrimSpace(value) == "" {
-						return errors.New("password is required")
-					}
-					return nil
-				}),
-		),
-	)
-	form.WithInput(in).WithOutput(out).WithTheme(promptTheme(out))
-	if err := form.Run(); err != nil {
+	username, err := promptInput(in, out, "Primary username", "", "", func(value string) error {
+		if strings.TrimSpace(value) == "" {
+			return errors.New("username is required")
+		}
+		if strings.ContainsAny(value, " \t") {
+			return errors.New("username must not contain spaces")
+		}
+		return nil
+	})
+	if err != nil {
+		return "", "", err
+	}
+	password, err := PromptPassword(in, out, "Password")
+	if err != nil {
 		return "", "", err
 	}
 	username = strings.TrimSpace(username)

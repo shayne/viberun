@@ -1,0 +1,22 @@
+
+Commands (use help --all for advanced):
+  apps                                 # list apps on the host
+  app <name>                           # enter app config mode
+  vibe <app>                           # attach to the app session
+  shell <app>                          # open an app shell
+  open <app>                           # open app URL
+  rm <app>                             # delete an app
+  config                               # show or update local config
+    config show                        # show local config
+    config set host <host>             # set default host
+    config set agent <provider>        # set default agent
+  proxy                                # configure host proxy
+    proxy setup [host]                 # configure host proxy
+  users                                # manage proxy users
+    users list                         # list proxy users
+    users add --username <u>           # add a user
+    users remove --username <u>        # remove a user
+    users set-password --username <u>  # set a password
+  help                                 # show this help
+
+Run `help <command>` for more details.

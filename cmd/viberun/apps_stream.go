@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/shayne/viberun/internal/muxrpc"
 )

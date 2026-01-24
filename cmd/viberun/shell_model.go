@@ -8,10 +8,11 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/shayne/viberun/internal/tui/theme"
@@ -112,9 +113,9 @@ func newShellModel(state *shellState) shellModel {
 	input := textinput.New()
 	input.Prompt = ""
 	input.Placeholder = ""
-	input.Focus()
 	input.CharLimit = 0
-	input.Width = 80
+	input.SetWidth(80)
+	input.Focus()
 
 	spin := spinner.New()
 	spin.Spinner = spinner.Spinner{Frames: []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}, FPS: 120 * time.Millisecond}
@@ -148,11 +149,14 @@ func (m shellModel) Init() tea.Cmd {
 		m.state.clearOnStart = false
 		cmds = append(cmds, tea.ClearScreen)
 	}
+	if cmd := m.input.Focus(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	// Kick off a theme refresh early so startup text can use the latest palette ASAP.
 	cmds = append(cmds, refreshShellThemeCmd())
 	cmds = append(cmds, themePollCmd())
 	if m.state.startupActive {
-		cmds = append(cmds, m.promptSpin.Tick)
+		cmds = append(cmds, spinnerTickCmd(m.promptSpin))
 	}
 	if m.state.resumeAfterAction && gatewayReady(m.state) {
 		m.state.resumeAfterAction = false
@@ -175,24 +179,23 @@ func (m shellModel) Init() tea.Cmd {
 
 func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.handleOSCKey(msg) {
 			return m, nil
 		}
-		if msg.Type == tea.KeyCtrlC {
+		switch msg.String() {
+		case "ctrl+c":
 			// Match shell behavior: clear the current input without exiting.
 			m.busy = false
 			m.input.SetValue("")
 			m.input.CursorEnd()
 			return m, nil
-		}
-		if msg.Type == tea.KeyCtrlL {
+		case "ctrl+l":
 			// Clear screen: keep header + prompt, drop scrollback.
 			m.state.output = nil
 			m.state.headerRendered = false
 			return m, tea.ClearScreen
-		}
-		if msg.Type == tea.KeyCtrlD {
+		case "ctrl+d":
 			if strings.TrimSpace(m.input.Value()) == "" {
 				m.state.quit = true
 				return m, tea.Quit
@@ -205,14 +208,14 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state.startupActive {
 			return m, nil
 		}
-		switch msg.Type {
-		case tea.KeyUp:
+		switch msg.String() {
+		case "up":
 			m.historyPrev()
 			return m, nil
-		case tea.KeyDown:
+		case "down":
 			m.historyNext()
 			return m, nil
-		case tea.KeyEnter:
+		case "enter":
 			line := strings.TrimSpace(m.input.Value())
 			m.input.SetValue("")
 			if m.state.confirmDeleteApp != "" {
@@ -289,10 +292,11 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		if m.width > 0 {
-			m.input.Width = m.width - 6
-			if m.input.Width < 10 {
-				m.input.Width = 10
+			width := m.width - 6
+			if width < 10 {
+				width = 10
 			}
+			m.input.SetWidth(width)
 		}
 		return m, nil
 	case commandResultMsg:
@@ -570,9 +574,15 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *shellModel) startSpinner(cmd tea.Cmd) tea.Cmd {
 	if cmd == nil {
-		return m.promptSpin.Tick
+		return spinnerTickCmd(m.promptSpin)
 	}
-	return tea.Batch(cmd, m.promptSpin.Tick)
+	return tea.Batch(cmd, spinnerTickCmd(m.promptSpin))
+}
+
+func spinnerTickCmd(spin spinner.Model) tea.Cmd {
+	return func() tea.Msg {
+		return spin.Tick()
+	}
 }
 
 func (m *shellModel) maybeRefreshTheme() tea.Cmd {
@@ -601,10 +611,11 @@ func repaintCmd(width, height int) tea.Cmd {
 	}
 }
 
-func (m *shellModel) handleOSCKey(msg tea.KeyMsg) bool {
+func (m *shellModel) handleOSCKey(msg tea.KeyPressMsg) bool {
 	now := time.Now()
+	key := msg.Key()
 	if m.oscState == oscStateIdle {
-		if isOSCStartKey(msg) {
+		if isOSCStartKey(key) {
 			m.oscState = oscStateCode
 			m.oscCodeLen = 0
 			m.oscStartedAt = now
@@ -616,15 +627,15 @@ func (m *shellModel) handleOSCKey(msg tea.KeyMsg) bool {
 		m.resetOSC()
 		return false
 	}
-	if msg.Type == tea.KeyCtrlG || isOSCEndKey(msg) {
+	if isCtrlG(key) || isOSCEndKey(key) {
 		m.resetOSC()
 		return true
 	}
-	if msg.Type != tea.KeyRunes || msg.Alt || len(msg.Runes) != 1 {
+	if key.Mod&tea.ModAlt != 0 || utf8.RuneCountInString(key.Text) != 1 {
 		m.resetOSC()
 		return false
 	}
-	r := msg.Runes[0]
+	r, _ := utf8.DecodeRuneInString(key.Text)
 	switch m.oscState {
 	case oscStateCode:
 		if r >= '0' && r <= '9' {
@@ -649,18 +660,27 @@ func (m *shellModel) handleOSCKey(msg tea.KeyMsg) bool {
 	}
 }
 
-func isOSCStartKey(msg tea.KeyMsg) bool {
-	if !msg.Alt || msg.Type != tea.KeyRunes || len(msg.Runes) != 1 {
+func isOSCStartKey(key tea.Key) bool {
+	if key.Mod&tea.ModAlt == 0 || utf8.RuneCountInString(key.Text) != 1 {
 		return false
 	}
-	return msg.Runes[0] == ']'
+	r, _ := utf8.DecodeRuneInString(key.Text)
+	return r == ']'
 }
 
-func isOSCEndKey(msg tea.KeyMsg) bool {
-	if !msg.Alt || msg.Type != tea.KeyRunes || len(msg.Runes) != 1 {
+func isOSCEndKey(key tea.Key) bool {
+	if key.Mod&tea.ModAlt == 0 || utf8.RuneCountInString(key.Text) != 1 {
 		return false
 	}
-	return msg.Runes[0] == '\\'
+	r, _ := utf8.DecodeRuneInString(key.Text)
+	return r == '\\'
+}
+
+func isCtrlG(key tea.Key) bool {
+	if key.Mod&tea.ModCtrl == 0 {
+		return false
+	}
+	return key.Code == 'g' || key.Code == 'G'
 }
 
 func isOSCDataRune(r rune) bool {
@@ -687,14 +707,14 @@ func (m *shellModel) resetOSC() {
 	m.oscStartedAt = time.Time{}
 }
 
-func (m shellModel) View() string {
+func (m shellModel) View() tea.View {
 	header := renderHeader(m.state)
 	headerBlock := header
 	if header != "" {
 		headerBlock = "\n" + header
 	}
 	if m.state.startupActive {
-		return headerBlock + "\n" + renderStartupLine(m)
+		return tea.NewView(headerBlock + "\n" + renderStartupLine(m))
 	}
 	outputLines := m.state.output
 	headerLines := 0
@@ -712,16 +732,16 @@ func (m shellModel) View() string {
 	if body == "" {
 		if m.busy {
 			if header != "" {
-				return headerBlock + "\n" + renderLoadingLine(m)
+				return tea.NewView(headerBlock + "\n" + renderLoadingLine(m))
 			}
-			return renderLoadingLine(m)
+			return tea.NewView(renderLoadingLine(m))
 		}
 		lines := []string{""}
 		if header != "" {
 			lines = []string{"", header, ""}
 		}
 		lines = append(lines, renderPrompt(m))
-		return strings.Join(lines, "\n")
+		return tea.NewView(strings.Join(lines, "\n"))
 	}
 	separator := "\n"
 	if len(outputLines) > 0 && isPromptLine(outputLines[0]) {
@@ -731,9 +751,9 @@ func (m shellModel) View() string {
 	if m.busy {
 		// Preserve the same header spacing even while the spinner is visible.
 		if header != "" {
-			return headerBlock + separator + body + "\n" + renderLoadingLine(m)
+			return tea.NewView(headerBlock + separator + body + "\n" + renderLoadingLine(m))
 		}
-		return body + "\n" + renderLoadingLine(m)
+		return tea.NewView(body + "\n" + renderLoadingLine(m))
 	}
 	lines := []string{body}
 	if header != "" {
@@ -753,7 +773,7 @@ func (m shellModel) View() string {
 		lines = append(lines, "")
 	}
 	lines = append(lines, renderPrompt(m))
-	return strings.Join(lines, "\n")
+	return tea.NewView(strings.Join(lines, "\n"))
 }
 
 func (m *shellModel) appendCommandLine(line string) {

@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestHandleOSCKey_DiscardSequence(t *testing.T) {
 	m := shellModel{}
-	sequence := []tea.KeyMsg{
+	sequence := []tea.KeyPressMsg{
 		keyAltRune(']'),
 		keyRune('1'),
 		keyRune('0'),
@@ -31,7 +31,7 @@ func TestHandleOSCKey_DiscardSequence(t *testing.T) {
 		keyRune('c'),
 		keyRune('4'),
 		keyRune('d'),
-		{Type: tea.KeyCtrlG},
+		{Code: 'g', Text: "g", Mod: tea.ModCtrl},
 	}
 	for i, msg := range sequence {
 		if !m.handleOSCKey(msg) {
@@ -72,10 +72,10 @@ func TestHandleOSCKey_TimeoutAllowsKey(t *testing.T) {
 	}
 }
 
-func keyRune(r rune) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+func keyRune(r rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: r, Text: string(r)}
 }
 
-func keyAltRune(r rune) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Alt: true, Runes: []rune{r}}
+func keyAltRune(r rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: r, Text: string(r), Mod: tea.ModAlt}
 }

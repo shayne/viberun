@@ -9,32 +9,18 @@ import (
 	"io"
 	"net"
 	"strings"
-
-	"github.com/charmbracelet/huh"
 )
 
 func PromptProxyPublicIP(in io.Reader, out io.Writer, defaultIP string) (string, error) {
-	value := strings.TrimSpace(defaultIP)
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title("Public IP address").
-				Description("Used for DNS A records. Leave as-is if unchanged.").
-				Prompt("> ").
-				Value(&value).
-				Validate(func(input string) error {
-					ip := net.ParseIP(strings.TrimSpace(input))
-					if ip == nil {
-						return errors.New("valid IP address is required")
-					}
-					return nil
-				}),
-		),
-	)
-
-	form.WithInput(in).WithOutput(out).WithTheme(promptTheme(out))
-	if err := form.Run(); err != nil {
+	input, err := promptInput(in, out, "Public IP address", "Used for DNS A records. Leave as-is if unchanged.", "", func(input string) error {
+		ip := net.ParseIP(strings.TrimSpace(input))
+		if ip == nil {
+			return errors.New("valid IP address is required")
+		}
+		return nil
+	})
+	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(value), nil
+	return strings.TrimSpace(input), nil
 }

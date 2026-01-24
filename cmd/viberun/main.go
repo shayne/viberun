@@ -27,8 +27,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"golang.org/x/term"
 
 	"github.com/shayne/viberun/internal/config"
@@ -989,7 +988,7 @@ func (s *loadOutputStyler) writeLine(line string) error {
 
 func runUsersEditor(gateway *gatewayClient, app string, info proxyInfo) (bool, error) {
 	primary := strings.TrimSpace(info.PrimaryUser)
-	secondaryOptions := make([]huh.Option[string], 0, len(info.Users))
+	secondaryOptions := make([]tui.SelectOption, 0, len(info.Users))
 	selected := make([]string, 0, len(info.AllowedUsers))
 	allowed := map[string]bool{}
 	for _, user := range info.AllowedUsers {
@@ -999,12 +998,10 @@ func runUsersEditor(gateway *gatewayClient, app string, info proxyInfo) (bool, e
 		if strings.EqualFold(user, primary) {
 			continue
 		}
-		option := huh.NewOption(user, user)
 		if allowed[user] {
-			option = option.Selected(true)
 			selected = append(selected, user)
 		}
-		secondaryOptions = append(secondaryOptions, option)
+		secondaryOptions = append(secondaryOptions, tui.SelectOption{Label: user, Value: user})
 	}
 	if len(secondaryOptions) == 0 {
 		fmt.Fprintln(os.Stdout, "No secondary users configured. Add one with: users add --username <u>")
@@ -1012,20 +1009,11 @@ func runUsersEditor(gateway *gatewayClient, app string, info proxyInfo) (bool, e
 	}
 	title := "Users with access"
 	desc := "Primary user " + primary + " always has access. Clear all to reset to primary only."
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewMultiSelect[string]().
-				Title(title).
-				Description(desc).
-				Options(secondaryOptions...).
-				Value(&selected),
-		),
-	)
-	form.WithInput(os.Stdin).WithOutput(os.Stdout).WithTheme(tui.PromptTheme(os.Stdout))
-	if err := form.Run(); err != nil {
+	next, err := tui.PromptMultiSelect(os.Stdin, os.Stdout, title, desc, secondaryOptions, selected)
+	if err != nil {
 		return false, err
 	}
-	selected = proxy.NormalizeUserList(selected)
+	selected = proxy.NormalizeUserList(next)
 	if sameStringSet(selected, filterSecondary(info.AllowedUsers, primary)) {
 		return false, nil
 	}

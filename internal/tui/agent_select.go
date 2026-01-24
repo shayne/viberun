@@ -10,8 +10,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/charmbracelet/huh"
-
 	"github.com/shayne/viberun/internal/agents"
 )
 
@@ -21,35 +19,25 @@ func SelectDefaultAgent(in io.Reader, out io.Writer) (string, error) {
 		return "", err
 	}
 
-	options := make([]huh.Option[string], 0, len(definitions)+2)
+	options := make([]SelectOption, 0, len(definitions)+2)
 	for _, def := range definitions {
 		label := strings.TrimSpace(def.Label)
 		if label == "" {
 			label = def.ID
 		}
-		options = append(options, huh.NewOption(label, def.ID))
+		options = append(options, SelectOption{Label: label, Value: def.ID})
 	}
 	options = append(options,
-		huh.NewOption("Custom (npx)", "custom:npx"),
-		huh.NewOption("Custom (uvx)", "custom:uvx"),
+		SelectOption{Label: "Custom (npx)", Value: "custom:npx"},
+		SelectOption{Label: "Custom (uvx)", Value: "custom:uvx"},
 	)
 
 	choice := agents.DefaultProvider()
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("Choose your default agent").
-				Options(options...).
-				Value(&choice),
-		),
-	)
-
-	form.WithInput(in).WithOutput(out).WithTheme(promptTheme(out))
-
-	if err := form.Run(); err != nil {
+	selected, err := PromptSelect(in, out, "Choose your default agent", "", options, choice)
+	if err != nil {
 		return "", err
 	}
-	choice = strings.TrimSpace(choice)
+	choice = strings.TrimSpace(selected)
 	if choice == "" {
 		return "", errors.New("no agent selected")
 	}
@@ -65,31 +53,21 @@ func SelectDefaultAgent(in io.Reader, out io.Writer) (string, error) {
 }
 
 func promptCustomRunner(in io.Reader, out io.Writer, runner string) (string, error) {
-	var pkg string
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title(fmt.Sprintf("%s package", runner)).
-				Prompt("> ").
-				Value(&pkg).
-				Validate(func(value string) error {
-					if strings.TrimSpace(value) == "" {
-						return errors.New("package is required")
-					}
-					if strings.ContainsAny(value, " \t") {
-						return errors.New("package must not contain spaces")
-					}
-					return nil
-				}),
-		),
-	)
-	form.WithInput(in).WithOutput(out).WithTheme(promptTheme(out))
-	if err := form.Run(); err != nil {
+	value, err := promptInput(in, out, fmt.Sprintf("%s package", runner), "", "", func(value string) error {
+		if strings.TrimSpace(value) == "" {
+			return errors.New("package is required")
+		}
+		if strings.ContainsAny(value, " \t") {
+			return errors.New("package must not contain spaces")
+		}
+		return nil
+	})
+	if err != nil {
 		return "", err
 	}
-	pkg = strings.TrimSpace(pkg)
-	if pkg == "" {
+	value = strings.TrimSpace(value)
+	if value == "" {
 		return "", errors.New("package is required")
 	}
-	return fmt.Sprintf("%s:%s", runner, pkg), nil
+	return fmt.Sprintf("%s:%s", runner, value), nil
 }

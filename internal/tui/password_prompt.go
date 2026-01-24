@@ -6,39 +6,44 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"io"
+	"os"
 	"strings"
 
-	"github.com/charmbracelet/huh"
+	"golang.org/x/term"
 )
 
 func PromptPassword(in io.Reader, out io.Writer, title string) (string, error) {
-	password := ""
 	if strings.TrimSpace(title) == "" {
 		title = "Password"
 	}
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title(title).
-				Prompt("> ").
-				EchoMode(huh.EchoModePassword).
-				Value(&password).
-				Validate(func(value string) error {
-					if strings.TrimSpace(value) == "" {
-						return errors.New("password is required")
-					}
-					return nil
-				}),
-		),
-	)
-	form.WithInput(in).WithOutput(out).WithTheme(promptTheme(out))
-	if err := form.Run(); err != nil {
+	if file, ok := in.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+		fmt.Fprintln(out, title)
+		fmt.Fprint(out, "> ")
+		value, err := term.ReadPassword(int(file.Fd()))
+		fmt.Fprintln(out)
+		if err != nil {
+			return "", err
+		}
+		password := strings.TrimSpace(string(value))
+		if password == "" {
+			return "", errors.New("password is required")
+		}
+		return password, nil
+	}
+	value, err := promptInput(in, out, title, "", "", func(input string) error {
+		if strings.TrimSpace(input) == "" {
+			return errors.New("password is required")
+		}
+		return nil
+	})
+	if err != nil {
 		return "", err
 	}
-	password = strings.TrimSpace(password)
-	if password == "" {
+	value = strings.TrimSpace(value)
+	if value == "" {
 		return "", errors.New("password is required")
 	}
-	return password, nil
+	return value, nil
 }

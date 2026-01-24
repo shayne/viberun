@@ -1,0 +1,5 @@
+
+Setup: connect your server
+  Step 1  # Choose a server (DigitalOcean, Hetzner, or a home server).
+  Step 2  # Make sure you can log in (username + IP or hostname).
+  Step 3  # Example login: root@1.2.3.4

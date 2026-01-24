@@ -9,9 +9,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
-
 	"github.com/shayne/viberun/internal/proxy"
 )
 
@@ -24,32 +21,16 @@ func PromptProxyDomainWithDefault(in io.Reader, out io.Writer, prefix string, de
 }
 
 func promptProxyDomain(in io.Reader, out io.Writer, prefix string, defaultDomain string) (string, error) {
-	value := strings.TrimSpace(defaultDomain)
 	prompt := strings.TrimSpace(prefix)
 	if prompt == "" {
 		prompt = "myapp."
 	}
-	promptStyle := lipgloss.NewStyle().Faint(true)
-	promptText := promptStyle.Render(prompt)
-
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title("Public domain name").
-				Description(fmt.Sprintf("Your apps will be available at %s<domain>", prompt)).
-				Prompt(promptText).
-				Placeholder("mydomain.com").
-				Value(&value).
-				Validate(func(input string) error {
-					_, err := proxy.NormalizeDomainSuffix(input)
-					return err
-				}),
-		),
-	)
-
-	form.WithInput(in).WithOutput(out).WithTheme(promptTheme(out))
-	if err := form.Run(); err != nil {
+	input, err := promptInput(in, out, "Public domain name", fmt.Sprintf("Your apps will be available at %s<domain>", prompt), "mydomain.com", func(input string) error {
+		_, err := proxy.NormalizeDomainSuffix(input)
+		return err
+	})
+	if err != nil {
 		return "", err
 	}
-	return proxy.NormalizeDomainSuffix(value)
+	return proxy.NormalizeDomainSuffix(input)
 }

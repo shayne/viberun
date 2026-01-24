@@ -9,8 +9,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"golang.org/x/term"
 )
 
@@ -43,7 +42,6 @@ type Theme struct {
 	Shell   ShellStyles
 	URL     URLStyles
 	ANSI    AnsiStyles
-	Huh     *huh.Theme
 }
 
 type ShellStyles struct {
@@ -311,6 +309,5 @@ func buildTheme(palette Palette) Theme {
 		Shell:   shell,
 		URL:     urlStyles,
 		ANSI:    ansi,
-		Huh:     buildHuhTheme(pal),
 	}
 }

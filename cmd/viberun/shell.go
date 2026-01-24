@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/term"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/shayne/viberun/internal/config"
 	"github.com/shayne/viberun/internal/tui/theme"
 )

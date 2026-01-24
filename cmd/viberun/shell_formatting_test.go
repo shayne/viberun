@@ -5,11 +5,12 @@
 package main
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/textinput"
+	"charm.land/bubbles/v2/textinput"
 )
 
 func newTestState(t *testing.T) *shellState {
@@ -29,7 +30,7 @@ func newTestModel(state *shellState) shellModel {
 	input.Prompt = ""
 	input.Placeholder = ""
 	input.CharLimit = 0
-	input.Width = 80
+	input.SetWidth(80)
 	input.Blur()
 	return shellModel{
 		state:  state,
@@ -111,9 +112,10 @@ func TestViewNoOutputShowsBlankLineBeforePrompt(t *testing.T) {
 	state := newTestState(t)
 	model := newTestModel(state)
 	view := model.View()
-	lines := strings.Split(view, "\n")
+	rendered := fmt.Sprint(view.Content)
+	lines := strings.Split(rendered, "\n")
 	if len(lines) < 4 {
-		t.Fatalf("expected at least 4 lines, got %d: %q", len(lines), view)
+		t.Fatalf("expected at least 4 lines, got %d: %q", len(lines), rendered)
 	}
 	if lines[0] != "" {
 		t.Fatalf("expected blank line above header, got %q", lines[0])
@@ -133,9 +135,10 @@ func TestViewSeparatorAfterClearSpacing(t *testing.T) {
 	state.output = []string{prefix + "apps", "myapp3"}
 	model := newTestModel(state)
 	view := model.View()
-	lines := strings.Split(view, "\n")
+	rendered := fmt.Sprint(view.Content)
+	lines := strings.Split(rendered, "\n")
 	if len(lines) < 5 {
-		t.Fatalf("expected at least 5 lines, got %d: %q", len(lines), view)
+		t.Fatalf("expected at least 5 lines, got %d: %q", len(lines), rendered)
 	}
 	if lines[0] != "" {
 		t.Fatalf("expected blank line above header, got %q", lines[0])
@@ -153,9 +156,10 @@ func TestViewInsertsBlankLineBeforePrompt(t *testing.T) {
 	state.output = []string{"viberun > apps", "myapp3"}
 	model := newTestModel(state)
 	view := model.View()
-	lines := strings.Split(view, "\n")
+	rendered := fmt.Sprint(view.Content)
+	lines := strings.Split(rendered, "\n")
 	if len(lines) < 4 {
-		t.Fatalf("expected at least 4 lines, got %d: %q", len(lines), view)
+		t.Fatalf("expected at least 4 lines, got %d: %q", len(lines), rendered)
 	}
 	if lines[len(lines)-2] != "" {
 		t.Fatalf("expected blank line before prompt, got %q", lines[len(lines)-2])
@@ -167,9 +171,10 @@ func TestViewPreservesTrailingBlankLine(t *testing.T) {
 	state.output = []string{"viberun > apps", "myapp3", ""}
 	model := newTestModel(state)
 	view := model.View()
-	lines := strings.Split(view, "\n")
+	rendered := fmt.Sprint(view.Content)
+	lines := strings.Split(rendered, "\n")
 	if len(lines) < 5 {
-		t.Fatalf("expected at least 5 lines, got %d: %q", len(lines), view)
+		t.Fatalf("expected at least 5 lines, got %d: %q", len(lines), rendered)
 	}
 	if lines[len(lines)-2] != "" {
 		t.Fatalf("expected preserved blank line before prompt, got %q", lines[len(lines)-2])
@@ -182,11 +187,12 @@ func TestViewNoExtraBlankLineAfterPromptOutput(t *testing.T) {
 	state.output = []string{prefix}
 	model := newTestModel(state)
 	view := model.View()
-	lines := strings.Split(view, "\n")
+	rendered := fmt.Sprint(view.Content)
+	lines := strings.Split(rendered, "\n")
 	if len(lines) < 3 {
-		t.Fatalf("expected at least 3 lines, got %d: %q", len(lines), view)
+		t.Fatalf("expected at least 3 lines, got %d: %q", len(lines), rendered)
 	}
 	if lines[len(lines)-2] == "" {
-		t.Fatalf("expected no blank line between prompt output and prompt, got %q", view)
+		t.Fatalf("expected no blank line between prompt output and prompt, got %q", rendered)
 	}
 }
