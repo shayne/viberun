@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - "main"
     tags:
       - "v*"
 
@@ -9,9 +11,40 @@ permissions:
   contents: read
 
 jobs:
+  meta:
+    name: Compute version metadata
+    runs-on: ubuntu-latest
+    outputs:
+      is_tag: ${{ steps.meta.outputs.is_tag }}
+      is_main: ${{ steps.meta.outputs.is_main }}
+      version: ${{ steps.meta.outputs.version }}
+      pypi_version: ${{ steps.meta.outputs.pypi_version }}
+    steps:
+      - name: Build version strings
+        id: meta
+        run: |
+          is_tag=false
+          is_main=false
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then is_tag=true; fi
+          if [ "${GITHUB_REF_NAME:-}" = "main" ]; then is_main=true; fi
+          ts=$(date -u +%Y%m%d%H%M%S)
+          short_sha="${GITHUB_SHA::7}"
+          if [ "$is_tag" = true ]; then
+            version="${GITHUB_REF_NAME}"
+            pypi_version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.0.0-dev.${ts}+${short_sha}"
+            pypi_version="0.0.0.dev${ts}"
+          fi
+          echo "is_tag=$is_tag" >> "$GITHUB_OUTPUT"
+          echo "is_main=$is_main" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "pypi_version=$pypi_version" >> "$GITHUB_OUTPUT"
+
   build-viberun:
     name: Build viberun (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ${{ matrix.runner }}
+    needs: [meta]
     strategy:
       fail-fast: false
       matrix:
@@ -43,7 +76,7 @@ jobs:
       - name: Build
         run: |
           mkdir -p dist
-          VERSION=${{ github.ref_name }}
+          VERSION=${{ needs.meta.outputs.version }}
           COMMIT=${{ github.sha }}
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
@@ -59,6 +92,7 @@ jobs:
   build-viberun-server:
     name: Build viberun-server (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ${{ matrix.runner }}
+    needs: [meta]
     strategy:
       fail-fast: false
       matrix:
@@ -82,7 +116,7 @@ jobs:
       - name: Build
         run: |
           mkdir -p dist
-          VERSION=${{ github.ref_name }}
+          VERSION=${{ needs.meta.outputs.version }}
           COMMIT=${{ github.sha }}
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
