@@ -48,6 +48,17 @@ if init_file.exists():
     init_text = init_file.read_text()
     init_text = re.sub(r'DIST_NAME = "[^"]+"', f'DIST_NAME = "{os.environ["PYPI_PACKAGE_NAME"]}"', init_text)
     init_file.write_text(init_text)
+
+pkg_name = os.environ["PYPI_PACKAGE_NAME"]
+if pkg_name != "viberun":
+    if not re.search(r'(?m)^viberun-dev\\s*=\\s*"', text):
+        text = re.sub(
+            r'(?m)^(viberun\\s*=\\s*\"[^\"]+\")\\s*$',
+            r'\\1\\nviberun-dev = \"viberun.__main__:main\"',
+            text,
+            count=1,
+        )
+        pyproject.write_text(text)
 PY
 
 if command -v uv >/dev/null 2>&1; then
