@@ -80,6 +80,7 @@ func TestShellModel_DialogConsumesInput(t *testing.T) {
 	state.promptDialog = flow.Dialog()
 	model := shellModel{state: state}
 	updated, _ := model.Update(keyRune('y'))
+	updated, _ = updated.(shellModel).Update(keyEnter())
 	next := updated.(shellModel)
 	if next.state.promptFlow != nil {
 		t.Fatalf("expected flow to complete and clear")
@@ -144,4 +145,8 @@ func keyRune(r rune) tea.KeyPressMsg {
 
 func keyAltRune(r rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: r, Text: string(r), Mod: tea.ModAlt}
+}
+
+func keyEnter() tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: tea.KeyEnter}
 }
