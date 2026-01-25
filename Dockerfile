@@ -126,10 +126,12 @@ RUN tic -x /tmp/ghostty-terminfo \
   && rm -f /tmp/ghostty-terminfo
 
 COPY bin/viberun-tmux-status /usr/local/bin/viberun-tmux-status
+COPY bin/viberun-tmux-click /usr/local/bin/viberun-tmux-click
 COPY bin/vrctl /usr/local/bin/vrctl
 COPY config/tmux.conf /etc/tmux.conf
 COPY config/bashrc-viberun.sh /etc/profile.d/viberun.sh
 RUN chmod +x /usr/local/bin/viberun-tmux-status \
+  && chmod +x /usr/local/bin/viberun-tmux-click \
   && chmod +x /usr/local/bin/vrctl \
   && cat /etc/profile.d/viberun.sh >> /etc/bash.bashrc
 

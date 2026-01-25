@@ -3,7 +3,6 @@ set -eu
 
 mode="${1:-}"
 app="${VIBERUN_APP:-}"
-agent="${VIBERUN_AGENT:-}"
 port="${VIBERUN_HOST_PORT:-}"
 listen_port="${VIBERUN_WEB_PORT:-8080}"
 public_url="${VIBERUN_PUBLIC_URL:-}"
@@ -21,7 +20,37 @@ color_muted="#[fg=colour240]"
 color_green="#[fg=colour35]"
 color_sep="#[fg=colour238]"
 update_file="/var/run/viberun-hostrpc/update.json"
-tail_default="${color_sep}|${color_reset} ${color_dim}ctrl-\\ to close${color_reset}"
+
+shell_window_exists() {
+  windows="$(tmux list-windows -F '#{window_name}' 2>/dev/null || true)"
+  printf "%s\n" "$windows" | grep -qx "shell"
+}
+
+set_status_url() {
+  value="$1"
+  if [ -n "$value" ]; then
+    tmux set-environment -g VIBERUN_STATUS_URL "$value" >/dev/null 2>&1 || true
+    return
+  fi
+  tmux set-environment -g -u VIBERUN_STATUS_URL >/dev/null 2>&1 || true
+}
+
+url_wrap() {
+  text="$1"
+  printf "#[range=user|url]%s#[range=default]" "$text"
+}
+
+detach_button() {
+  printf "%s|%s %s#[bold]#[range=user|detach]detach#[range=default]%s " \
+    "$color_sep" "$color_reset" "$color_dim" "$color_reset"
+}
+
+shell_button() {
+  if shell_window_exists; then
+    return
+  fi
+  printf "%s#[range=user|shell]shell#[range=default]%s" "$color_dim" "$color_reset"
+}
 
 is_listening() {
   ss_out="$(ss -ltn 2>/dev/null)" || return 2
@@ -40,17 +69,13 @@ update_available() {
 
 status_tail() {
   if update_available; then
-    printf "%s|%s %supdate available%s %s|%s %sctrl-\\\\ to close%s %s|%s %sviberun %s update%s" \
+    printf "%s|%s %supdate available%s %s|%s %sviberun %s update%s%s" \
       "$color_sep" "$color_reset" "$color_dim" "$color_reset" \
-      "$color_sep" "$color_reset" "$color_dim" "$color_reset" \
-      "$color_sep" "$color_reset" "$color_dim" "$app" "$color_reset"
+      "$color_sep" "$color_reset" "$color_dim" "$app" "$color_reset" \
+      "$(detach_button)"
     return
   fi
-  printf "%s" "$tail_default"
-}
-
-print_close_hint() {
-  printf "%sctrl-\\ to close%s" "$color_dim" "$color_reset"
+  printf "%s" "$(detach_button)"
 }
 
 print_status() {
@@ -71,11 +96,16 @@ case "$mode" in
     if [ -n "$app" ]; then
       label="$label $app"
     fi
-    printf "%s" "$label"
+    printf "%s %s|%s" "$label" "$color_sep" "$color_reset"
     ;;
   right)
+    shell="$(shell_button)"
+    if [ -n "$shell" ]; then
+      shell=" $shell"
+    fi
     if [ -z "$port" ]; then
-      print_close_hint
+      set_status_url ""
+      printf "%s%s%s%s" "#[align=left]" "$shell" "#[align=right]" "$(detach_button)"
       exit 0
     fi
     if is_listening; then
@@ -83,14 +113,17 @@ case "$mode" in
       if [ -n "$public_url" ]; then
         label="$public_url"
       fi
-      print_status "$color_green" "$dot_on" "$color_green" "$label"
+      set_status_url "$label"
+      label="$(url_wrap "$label")"
+      printf "%s%s%s%s" "#[align=left]" "$shell" "#[align=right]" "$(print_status "$color_green" "$dot_on" "$color_green" "$label")"
     else
+      set_status_url ""
       case $? in
         2)
-          print_status "$color_muted" "!" "$color_muted" "svc check err"
+          printf "%s%s%s%s" "#[align=left]" "$shell" "#[align=right]" "$(print_status "$color_muted" "!" "$color_muted" "svc check err")"
           ;;
         *)
-          print_status "$color_muted" "$dot_off" "$color_muted" "no web svc"
+          printf "%s%s%s%s" "#[align=left]" "$shell" "#[align=right]" "$(print_status "$color_muted" "$dot_off" "$color_muted" "no web svc")"
           ;;
       esac
     fi

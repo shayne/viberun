@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+
+range="${1:-}"
+
+case "$range" in
+  ""|"window"|"pane"|"session")
+    exec tmux select-window -t {mouse}
+    ;;
+  "shell")
+    if tmux list-windows -F '#{window_name}' 2>/dev/null | grep -qx "shell"; then
+      exec tmux select-window -t shell
+    fi
+    exec tmux new-window -n shell
+    ;;
+  "detach")
+    exec tmux detach-client
+    ;;
+  *)
+    exec tmux select-window -t "$range"
+    ;;
+esac
