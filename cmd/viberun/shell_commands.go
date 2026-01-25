@@ -368,21 +368,56 @@ func dispatchGlobalCommand(state *shellState, cmd parsedCommand) (string, tea.Cm
 		return handleSetupShell(state, cmd.args)
 	case "proxy":
 		if len(cmd.args) > 0 && cmd.args[0] == "setup" {
+			if state.promptFlow != nil {
+				return "Another prompt is already active.", nil
+			}
 			host := ""
 			if len(cmd.args) > 1 {
 				host = cmd.args[1]
 			}
-			return "", shellActionCmd(shellAction{kind: actionProxySetup, host: host})
+			resolved, err := resolveShellHost(state, host)
+			if err != nil {
+				return renderShellError(fmt.Sprintf("error: %v", err)), nil
+			}
+			gateway, cleanup, err := ensureShellGatewayForHost(state, host)
+			if err != nil {
+				return renderShellError(fmt.Sprintf("error: %v", err)), nil
+			}
+			if cleanup != nil {
+				defer cleanup()
+			}
+			summary, err := fetchRemoteProxyConfig(gateway)
+			configError := err != nil
+			configured := !configError && summary.Enabled && strings.TrimSpace(summary.BaseDomain) != "" && strings.TrimSpace(summary.PrimaryUser) != ""
+			input := proxyFlowInput{
+				Host:            resolved.Host,
+				Summary:         summary,
+				Configured:      configured,
+				ConfigError:     configError,
+				PublicIP:        strings.TrimSpace(summary.PublicIP),
+				UpdateArtifacts: true,
+				ForceSetup:      true,
+			}
+			cmd := startPromptFlow(state, newProxySetupFlow(input))
+			return "", cmd
 		}
 		return "error: usage: proxy setup [host]", nil
 	case "users":
 		return handleUsersShell(state, cmd.args)
 	case "wipe":
+		if state.promptFlow != nil {
+			return "Another prompt is already active.", nil
+		}
 		host := ""
 		if len(cmd.args) > 0 {
 			host = cmd.args[0]
 		}
-		return "", shellActionCmd(shellAction{kind: actionWipe, host: host})
+		resolved, err := resolveShellHost(state, host)
+		if err != nil {
+			return renderShellError(fmt.Sprintf("error: %v", err)), nil
+		}
+		cmd := startPromptFlow(state, newWipeFlow(wipeFlowInput{Host: resolved.Host, WipeLocal: true}))
+		return "", cmd
 	case "exit", "quit":
 		state.quit = true
 		return "", tea.Quit
@@ -516,9 +551,17 @@ func handleUsersShell(state *shellState, args []string) (string, tea.Cmd) {
 				return runUsersRemoveShell(state, username, hostArg)
 			})
 		case "add":
-			return "", shellActionCmd(shellAction{kind: actionUsersAdd, username: username, host: hostArg})
+			if state.promptFlow != nil {
+				return "Another prompt is already active.", nil
+			}
+			cmd := startPromptFlow(state, newPasswordFlow(passwordFlowInput{Host: hostArg, Username: username, Action: "add"}))
+			return "", cmd
 		default:
-			return "", shellActionCmd(shellAction{kind: actionUsersSetPassword, username: username, host: hostArg})
+			if state.promptFlow != nil {
+				return "Another prompt is already active.", nil
+			}
+			cmd := startPromptFlow(state, newPasswordFlow(passwordFlowInput{Host: hostArg, Username: username, Action: "set-password"}))
+			return "", cmd
 		}
 	default:
 		return "error: usage: users list|add|remove|set-password [host]", nil
@@ -576,13 +619,29 @@ func handleSetupShell(state *shellState, args []string) (string, tea.Cmd) {
 	if len(args) != 0 {
 		return "error: usage: setup", nil
 	}
-	if state.setupAction != nil {
+	if state.setupAction != nil || state.promptFlow != nil {
 		return "Setup already in progress.", nil
 	}
 	state.pendingCmd = nil
-	state.setupNeeded = true
-	state.setupAction = &setupAction{}
-	return renderSetupIntro(state), nil
+	alreadyConnected := state.bootstrapped && !state.setupNeeded && strings.TrimSpace(state.host) != ""
+	if !alreadyConnected {
+		state.setupNeeded = true
+	}
+	cmd := startPromptFlow(state, newSetupFlow(setupFlowInput{
+		ExistingHost:     state.host,
+		AlreadyConnected: alreadyConnected,
+		DevMode:          state.devMode,
+	}))
+	return renderSetupIntro(state), cmd
+}
+
+func startPromptFlow(state *shellState, flow promptFlow) tea.Cmd {
+	state.promptFlow = flow
+	state.promptDialog = flow.Dialog()
+	if state.promptDialog == nil {
+		return nil
+	}
+	return state.promptDialog.Init()
 }
 
 type infoLine struct {

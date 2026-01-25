@@ -15,6 +15,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/shayne/viberun/internal/tui/dialogs"
 	"github.com/shayne/viberun/internal/tui/theme"
 )
 
@@ -178,6 +179,36 @@ func (m shellModel) Init() tea.Cmd {
 }
 
 func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.state != nil && m.state.promptFlow != nil {
+		dialog := m.state.promptDialog
+		if dialog == nil {
+			dialog = m.state.promptFlow.Dialog()
+		}
+		updated, cmd := dialog.Update(msg)
+		m.state.promptDialog = updated
+		if result, ok := dialogResult(updated); ok {
+			m.state.promptFlow.ApplyResult(*result)
+			if m.state.promptFlow.Done() || m.state.promptFlow.Cancelled() {
+				note, quit := applyPromptFlowResult(m.state, m.state.promptFlow)
+				m.state.promptFlow = nil
+				m.state.promptDialog = nil
+				if note != "" {
+					m.state.appendOutput(note)
+				}
+				if quit {
+					return m, tea.Quit
+				}
+			} else {
+				m.state.promptDialog = m.state.promptFlow.Dialog()
+				if m.state.promptDialog != nil {
+					if initCmd := m.state.promptDialog.Init(); initCmd != nil {
+						cmd = tea.Batch(cmd, initCmd)
+					}
+				}
+			}
+		}
+		return m, cmd
+	}
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		if m.handleOSCKey(msg) {
@@ -245,6 +276,12 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state.history = append(m.state.history, line)
 			m.state.historyIdx = len(m.state.history)
 			result, cmd := dispatchShellCommand(m.state, line)
+			if m.state.promptFlow != nil {
+				if result != "" {
+					m.state.appendOutput(result)
+				}
+				return m, cmd
+			}
 			if cmd != nil {
 				m.busy = true
 				return m, m.startSpinner(cmd)
@@ -776,6 +813,13 @@ func (m shellModel) View() tea.View {
 	return tea.NewView(strings.Join(lines, "\n"))
 }
 
+func (m shellModel) Cursor() *tea.Cursor {
+	if m.state != nil && m.state.promptDialog != nil {
+		return m.state.promptDialog.Cursor()
+	}
+	return nil
+}
+
 func (m *shellModel) appendCommandLine(line string) {
 	prefix := renderPromptPrefix(m.state)
 	if len(m.state.output) > 0 {
@@ -890,6 +934,9 @@ func renderHeader(state *shellState) string {
 }
 
 func renderPrompt(m shellModel) string {
+	if m.state != nil && m.state.promptDialog != nil {
+		return m.state.promptDialog.View()
+	}
 	if m.state != nil && m.state.confirmDeleteApp != "" {
 		return confirmDeletePrompt(m.state) + m.input.View()
 	}
@@ -942,6 +989,29 @@ func countLines(text string) int {
 		return 0
 	}
 	return strings.Count(text, "\n") + 1
+}
+
+type dialogResultProvider interface {
+	Result() (*dialogs.Result, bool)
+}
+
+type dialogValuesProvider interface {
+	Values() (map[string]string, bool)
+}
+
+func dialogResult(dialog dialogs.Dialog) (*dialogs.Result, bool) {
+	if provider, ok := dialog.(dialogResultProvider); ok {
+		if result, ok := provider.Result(); ok {
+			return result, true
+		}
+		return nil, false
+	}
+	if provider, ok := dialog.(dialogValuesProvider); ok {
+		if values, ok := provider.Values(); ok {
+			return &dialogs.Result{Values: values}, true
+		}
+	}
+	return nil, false
 }
 
 func isPromptLine(line string) bool {

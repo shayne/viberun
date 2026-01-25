@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/shayne/viberun/internal/tui/dialogs"
 )
 
 func TestHandleOSCKey_DiscardSequence(t *testing.T) {
@@ -70,6 +71,71 @@ func TestHandleOSCKey_TimeoutAllowsKey(t *testing.T) {
 	if m.oscState != oscStateIdle {
 		t.Fatalf("expected osc state reset after timeout, got %v", m.oscState)
 	}
+}
+
+func TestShellModel_DialogConsumesInput(t *testing.T) {
+	state := &shellState{}
+	flow := newConfirmFlow("confirm", "Confirm?", "", false)
+	state.promptFlow = flow
+	state.promptDialog = flow.Dialog()
+	model := shellModel{state: state}
+	updated, _ := model.Update(keyRune('y'))
+	next := updated.(shellModel)
+	if next.state.promptFlow != nil {
+		t.Fatalf("expected flow to complete and clear")
+	}
+}
+
+func TestShellModel_PromptFlowForwardsNonKeyMessages(t *testing.T) {
+	dialog := &testDialog{}
+	flow := &testFlow{dialog: dialog}
+	state := &shellState{promptFlow: flow, promptDialog: dialog}
+	model := shellModel{state: state}
+	updated, _ := model.Update(testMsg{})
+	next := updated.(shellModel)
+	if next.state.promptFlow != nil {
+		t.Fatalf("expected flow to complete after non-key message")
+	}
+}
+
+type testMsg struct{}
+
+type testDialog struct {
+	result *dialogs.Result
+}
+
+func (d *testDialog) ID() string                      { return "test" }
+func (d *testDialog) Init() tea.Cmd                   { return nil }
+func (d *testDialog) View() string                    { return "" }
+func (d *testDialog) Cursor() *tea.Cursor             { return nil }
+func (d *testDialog) Result() (*dialogs.Result, bool) { return d.result, d.result != nil }
+
+func (d *testDialog) Update(msg tea.Msg) (dialogs.Dialog, tea.Cmd) {
+	if _, ok := msg.(testMsg); ok {
+		d.result = &dialogs.Result{Confirmed: true}
+	}
+	return d, nil
+}
+
+type testFlow struct {
+	dialog *testDialog
+	done   bool
+}
+
+func (f *testFlow) Dialog() dialogs.Dialog {
+	return f.dialog
+}
+
+func (f *testFlow) ApplyResult(dialogs.Result) {
+	f.done = true
+}
+
+func (f *testFlow) Done() bool {
+	return f.done
+}
+
+func (f *testFlow) Cancelled() bool {
+	return false
 }
 
 func keyRune(r rune) tea.KeyPressMsg {

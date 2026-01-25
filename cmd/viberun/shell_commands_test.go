@@ -141,11 +141,12 @@ func TestSetupCommandSetsPrompt(t *testing.T) {
 		scope: scopeGlobal,
 	}
 	result, cmd := dispatchShellCommand(state, "setup")
-	if cmd != nil {
-		t.Fatalf("expected no command for setup")
+	_ = cmd
+	if state.promptFlow == nil {
+		t.Fatalf("expected setup prompt flow to be queued")
 	}
-	if state.setupAction == nil {
-		t.Fatalf("expected setup action to be queued")
+	if state.promptDialog == nil {
+		t.Fatalf("expected setup dialog to be initialized")
 	}
 	if result == "" {
 		t.Fatalf("expected setup instructions output")

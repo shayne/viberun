@@ -37,17 +37,17 @@ func runShellAction(state *shellState, action shellAction) error {
 	case actionDelete:
 		return runShellDelete(state, action.app)
 	case actionProxySetup:
-		return runShellProxySetup(state, action.host)
+		return runShellProxySetup(state, action.host, action.proxyPlan)
 	case actionUsersAdd:
-		return runShellUsersAdd(state, action.username, action.host)
+		return runShellUsersAdd(state, action.username, action.host, action.passwordPlan)
 	case actionUsersRemove:
 		return runShellUsersRemove(state, action.username, action.host)
 	case actionUsersSetPassword:
-		return runShellUsersSetPassword(state, action.username, action.host)
+		return runShellUsersSetPassword(state, action.username, action.host, action.passwordPlan)
 	case actionUsersEditor:
 		return runShellUsersEditor(state, action.app)
 	case actionWipe:
-		return runShellWipe(state, action.host)
+		return runShellWipe(state, action.host, action.wipePlan)
 	default:
 		return nil
 	}
@@ -368,9 +368,12 @@ func runDeleteConfirmed(state *shellState, appArg string) (string, error) {
 	return output, nil
 }
 
-func runShellProxySetup(state *shellState, hostArg string) error {
+func runShellProxySetup(state *shellState, hostArg string, plan *proxyPlan) error {
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return errors.New("proxy setup requires a TTY")
+	}
+	if plan != nil && strings.TrimSpace(plan.Host) != "" {
+		hostArg = plan.Host
 	}
 	gateway, cleanup, err := ensureShellGatewayForHost(state, hostArg)
 	if err != nil {
@@ -381,19 +384,26 @@ func runShellProxySetup(state *shellState, hostArg string) error {
 	if err != nil {
 		return err
 	}
-	if err := runProxySetupFlow(resolved.Host, gateway, proxySetupOptions{updateArtifacts: true, forceSetup: true}); err != nil {
+	if err := runProxySetupFlow(resolved.Host, gateway, proxySetupOptions{updateArtifacts: true, forceSetup: true}, plan); err != nil {
 		return err
 	}
 	return nil
 }
 
-func runShellUsersAdd(state *shellState, username string, hostArg string) error {
+func runShellUsersAdd(state *shellState, username string, hostArg string, plan *passwordPlan) error {
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return errors.New("user management requires a TTY")
 	}
-	password, err := tui.PromptPassword(os.Stdin, os.Stdout, "Password")
-	if err != nil {
-		return fmt.Errorf("failed to read password: %w", err)
+	password := ""
+	if plan != nil {
+		password = plan.Password
+	}
+	if strings.TrimSpace(password) == "" {
+		var err error
+		password, err = tui.PromptPassword(os.Stdin, os.Stdout, "Password")
+		if err != nil {
+			return fmt.Errorf("failed to read password: %w", err)
+		}
 	}
 	gateway, cleanup, err := ensureShellGatewayForHost(state, hostArg)
 	if err != nil {
@@ -420,13 +430,20 @@ func runShellUsersRemove(state *shellState, username string, hostArg string) err
 	return nil
 }
 
-func runShellUsersSetPassword(state *shellState, username string, hostArg string) error {
+func runShellUsersSetPassword(state *shellState, username string, hostArg string, plan *passwordPlan) error {
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return errors.New("user management requires a TTY")
 	}
-	password, err := tui.PromptPassword(os.Stdin, os.Stdout, "Password")
-	if err != nil {
-		return fmt.Errorf("failed to read password: %w", err)
+	password := ""
+	if plan != nil {
+		password = plan.Password
+	}
+	if strings.TrimSpace(password) == "" {
+		var err error
+		password, err = tui.PromptPassword(os.Stdin, os.Stdout, "Password")
+		if err != nil {
+			return fmt.Errorf("failed to read password: %w", err)
+		}
 	}
 	gateway, cleanup, err := ensureShellGatewayForHost(state, hostArg)
 	if err != nil {
@@ -471,7 +488,7 @@ func runShellUsersEditor(state *shellState, appArg string) error {
 	return nil
 }
 
-func runShellWipe(state *shellState, hostArg string) error {
+func runShellWipe(state *shellState, hostArg string, plan *wipePlan) error {
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return errors.New("wipe requires a TTY")
 	}
@@ -479,27 +496,17 @@ func runShellWipe(state *shellState, hostArg string) error {
 	if err != nil {
 		return err
 	}
-	confirm, err := tui.PromptWipeDecision(os.Stdin, os.Stdout, resolved.Host)
+	activePlan := plan
+	if activePlan == nil {
+		activePlan = &wipePlan{Host: resolved.Host, WipeLocal: true}
+	}
+	wiped, err := runWipeFlow(resolved.Host, activePlan.WipeLocal, activePlan)
 	if err != nil {
 		return err
 	}
-	if !confirm {
+	if !wiped {
 		state.appendOutput("Wipe cancelled.")
 		return nil
-	}
-	if err := tui.PromptWipeConfirm(os.Stdin, os.Stdout); err != nil {
-		return err
-	}
-	gateway, cleanup, err := ensureShellGatewayForHost(state, hostArg)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	if err := runRemoteWipe(gateway); err != nil {
-		return err
-	}
-	if err := config.RemoveConfigFiles(); err != nil {
-		return err
 	}
 	state.appendOutput("Wipe complete.")
 	return nil

@@ -11,7 +11,7 @@ import (
 )
 
 func PromptProxyAuth(in io.Reader, out io.Writer, defaultUser string) (string, string, error) {
-	username, err := promptInput(in, out, "Primary username", "", "", func(value string) error {
+	username, err := promptInputWithDefault(in, out, "Primary username", "", "", strings.TrimSpace(defaultUser), func(value string) error {
 		if strings.TrimSpace(value) == "" {
 			return errors.New("username is required")
 		}

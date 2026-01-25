@@ -25,7 +25,7 @@ func promptProxyDomain(in io.Reader, out io.Writer, prefix string, defaultDomain
 	if prompt == "" {
 		prompt = "myapp."
 	}
-	input, err := promptInput(in, out, "Public domain name", fmt.Sprintf("Your apps will be available at %s<domain>", prompt), "mydomain.com", func(input string) error {
+	input, err := promptInputWithDefault(in, out, "Public domain name", fmt.Sprintf("Your apps will be available at %s<domain>", prompt), "mydomain.com", strings.TrimSpace(defaultDomain), func(input string) error {
 		_, err := proxy.NormalizeDomainSuffix(input)
 		return err
 	})

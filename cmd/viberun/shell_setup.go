@@ -20,8 +20,12 @@ import (
 )
 
 func runShellSetup(state *shellState, action setupAction) (bool, string, error) {
+	plan := action.plan
 	hostArg := strings.TrimSpace(action.host)
-	if hostArg == "" {
+	if plan != nil && strings.TrimSpace(plan.Host) != "" {
+		hostArg = strings.TrimSpace(plan.Host)
+	}
+	if hostArg == "" && plan == nil {
 		if state.bootstrapped && !state.setupNeeded && strings.TrimSpace(state.host) != "" {
 			rerun, err := tui.PromptSetupRerun(os.Stdin, os.Stdout, state.host)
 			if err != nil {
@@ -30,13 +34,21 @@ func runShellSetup(state *shellState, action setupAction) (bool, string, error) 
 			if !rerun {
 				return false, fmt.Sprintf("Okay, staying connected to %s.", state.host), nil
 			}
-			if _, err := runWipeFlow(state.host, false); err != nil {
+			if _, err := runWipeFlow(state.host, false, nil); err != nil {
 				return false, "", err
 			}
 		}
 		var err error
 		hostArg, err = tui.PromptSetupHost(os.Stdin, os.Stdout, state.host)
 		if err != nil {
+			return false, "", err
+		}
+	}
+	if hostArg == "" {
+		return false, "", errors.New("server login is required")
+	}
+	if plan != nil && plan.Wipe != nil {
+		if _, err := runWipeFlow(plan.Wipe.Host, plan.Wipe.WipeLocal, plan.Wipe); err != nil {
 			return false, "", err
 		}
 	}
@@ -76,47 +88,48 @@ func runShellSetup(state *shellState, action setupAction) (bool, string, error) 
 	skipBootstrap := false
 	proxyImageTag := ""
 	bootstrapped, _ := checkHostBootstrapped(resolved.Host)
-	if state.devMode {
+	if plan != nil {
+		updateArtifacts = plan.UpdateArtifacts
+	} else if state.devMode {
 		if bootstrapped && tty {
 			updateArtifacts = promptYesNoDefaultYes("Update server binary and images? [Y/n]: ")
 		}
+	} else if bootstrapped && tty {
+		remoteVersion, err := fetchRemoteServerVersion(resolved.Host)
+		if isDevChannel() {
+			if err != nil {
+				updateArtifacts = promptYesNoDefaultYes("Server version unknown. Update server now? [Y/n]: ")
+			} else if update, defaultYes := devUpdateDecision(version, remoteVersion); update {
+				prompt := fmt.Sprintf("Server is %s. Update to %s? [Y/n]: ", strings.TrimSpace(remoteVersion), strings.TrimSpace(version))
+				if defaultYes {
+					updateArtifacts = promptYesNoDefaultYes(prompt)
+				} else {
+					updateArtifacts = promptYesNoDefaultNo(prompt)
+				}
+			} else {
+				updateArtifacts = false
+			}
+		} else {
+			if err != nil {
+				updateArtifacts = promptYesNoDefaultNo("Server version unknown. Update server now? [y/N]: ")
+			} else if cmp, ok := compareSemver(version, remoteVersion); !ok {
+				updateArtifacts = promptYesNoDefaultNo("Server version unknown. Update server now? [y/N]: ")
+			} else if cmp > 0 {
+				updateArtifacts = promptYesNoDefaultYes(fmt.Sprintf("Server is %s. Update to %s? [Y/n]: ", strings.TrimSpace(remoteVersion), strings.TrimSpace(version)))
+			} else {
+				updateArtifacts = false
+			}
+		}
+	}
+	if state.devMode {
 		if updateArtifacts {
 			localBootstrap = true
 			localImage = true
 		} else {
 			env = append(env, "VIBERUN_SKIP_SERVER_INSTALL=1", "VIBERUN_SKIP_IMAGE_PULL=1")
 		}
-	} else {
-		if bootstrapped && tty {
-			remoteVersion, err := fetchRemoteServerVersion(resolved.Host)
-			if isDevChannel() {
-				if err != nil {
-					updateArtifacts = promptYesNoDefaultYes("Server version unknown. Update server now? [Y/n]: ")
-				} else if update, defaultYes := devUpdateDecision(version, remoteVersion); update {
-					prompt := fmt.Sprintf("Server is %s. Update to %s? [Y/n]: ", strings.TrimSpace(remoteVersion), strings.TrimSpace(version))
-					if defaultYes {
-						updateArtifacts = promptYesNoDefaultYes(prompt)
-					} else {
-						updateArtifacts = promptYesNoDefaultNo(prompt)
-					}
-				} else {
-					updateArtifacts = false
-				}
-			} else {
-				if err != nil {
-					updateArtifacts = promptYesNoDefaultNo("Server version unknown. Update server now? [y/N]: ")
-				} else if cmp, ok := compareSemver(version, remoteVersion); !ok {
-					updateArtifacts = promptYesNoDefaultNo("Server version unknown. Update server now? [y/N]: ")
-				} else if cmp > 0 {
-					updateArtifacts = promptYesNoDefaultYes(fmt.Sprintf("Server is %s. Update to %s? [Y/n]: ", strings.TrimSpace(remoteVersion), strings.TrimSpace(version)))
-				} else {
-					updateArtifacts = false
-				}
-			}
-		}
-		if bootstrapped && !updateArtifacts {
-			skipBootstrap = true
-		}
+	} else if bootstrapped && !updateArtifacts {
+		skipBootstrap = true
 	}
 	if localBootstrap {
 		ui.Step("Stage server binary")
@@ -205,7 +218,7 @@ func runShellSetup(state *shellState, action setupAction) (bool, string, error) 
 			fmt.Fprintf(os.Stderr, "proxy setup failed: %v\n", err)
 		} else {
 			defer func() { _ = gateway.Close() }()
-			if err := runProxySetupFlow(resolved.Host, gateway, proxySetupOptions{updateArtifacts: updateArtifacts, showSkipHint: true, proxyImage: proxyImageTag}); err != nil {
+			if err := runProxySetupFlow(resolved.Host, gateway, proxySetupOptions{updateArtifacts: updateArtifacts, showSkipHint: true, proxyImage: proxyImageTag}, nil); err != nil {
 				fmt.Fprintf(os.Stderr, "proxy setup failed: %v\n", err)
 			}
 		}

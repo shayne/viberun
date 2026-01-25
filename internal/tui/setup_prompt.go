@@ -11,7 +11,7 @@ import (
 )
 
 func PromptSetupHost(in io.Reader, out io.Writer, defaultHost string) (string, error) {
-	input, err := promptInput(in, out, "Server login", "", "user@host  # username + address", func(input string) error {
+	input, err := promptInputWithDefault(in, out, "Server login", "", "user@host  # username + address", strings.TrimSpace(defaultHost), func(input string) error {
 		if strings.TrimSpace(input) == "" {
 			return errors.New("please enter a server login")
 		}

@@ -7,24 +7,37 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/shayne/viberun/internal/config"
 	"github.com/shayne/viberun/internal/tui"
 )
 
-func runWipeFlow(host string, wipeLocal bool) (bool, error) {
-	confirm, err := tui.PromptWipeDecision(os.Stdin, os.Stdout, host)
-	if err != nil {
-		return false, err
+func runWipeFlow(host string, wipeLocal bool, plan *wipePlan) (bool, error) {
+	if plan != nil {
+		if value := strings.TrimSpace(plan.Host); value != "" {
+			host = value
+		}
+		wipeLocal = plan.WipeLocal
 	}
-	if !confirm {
-		return false, nil
-	}
-	if err := ensureDevServerSynced(host); err != nil {
-		return false, err
-	}
-	if err := tui.PromptWipeConfirm(os.Stdin, os.Stdout); err != nil {
-		return false, err
+	if plan == nil {
+		confirm, err := tui.PromptWipeDecision(os.Stdin, os.Stdout, host)
+		if err != nil {
+			return false, err
+		}
+		if !confirm {
+			return false, nil
+		}
+		if err := ensureDevServerSynced(host); err != nil {
+			return false, err
+		}
+		if err := tui.PromptWipeConfirm(os.Stdin, os.Stdout); err != nil {
+			return false, err
+		}
+	} else {
+		if err := ensureDevServerSynced(host); err != nil {
+			return false, err
+		}
 	}
 	gateway, err := startGateway(host, "", devChannelEnv(), false)
 	if err != nil {

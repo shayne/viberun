@@ -14,6 +14,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/shayne/viberun/internal/config"
+	"github.com/shayne/viberun/internal/tui/dialogs"
 	"github.com/shayne/viberun/internal/tui/theme"
 )
 
@@ -35,6 +36,7 @@ const (
 
 type setupAction struct {
 	host string
+	plan *setupPlan
 }
 
 type appStatus string
@@ -76,10 +78,13 @@ const (
 )
 
 type shellAction struct {
-	kind     shellActionKind
-	app      string
-	host     string
-	username string
+	kind         shellActionKind
+	app          string
+	host         string
+	username     string
+	proxyPlan    *proxyPlan
+	wipePlan     *wipePlan
+	passwordPlan *passwordPlan
 }
 
 type shellState struct {
@@ -117,6 +122,8 @@ type shellState struct {
 	confirmDeleteApp   string
 	setupAction        *setupAction
 	shellAction        *shellAction
+	promptFlow         promptFlow
+	promptDialog       dialogs.Dialog
 	quit               bool
 	devMode            bool
 	gateway            *gatewayClient

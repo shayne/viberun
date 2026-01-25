@@ -9,7 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
+
+	"golang.org/x/term"
+
+	"github.com/shayne/viberun/internal/tui/dialogs"
 )
 
 type SelectOption struct {
@@ -18,6 +23,13 @@ type SelectOption struct {
 }
 
 func promptInput(in io.Reader, out io.Writer, title, description, placeholder string, validate func(string) error) (string, error) {
+	return promptInputWithDefault(in, out, title, description, placeholder, "", validate)
+}
+
+func promptInputWithDefault(in io.Reader, out io.Writer, title, description, placeholder, defaultValue string, validate func(string) error) (string, error) {
+	if useDialogPrompts(in, out) {
+		return promptInputDialog(in, out, title, description, placeholder, defaultValue, validate, false)
+	}
 	reader := bufio.NewReader(in)
 	printPromptHeader(out, title, description, placeholder)
 	for {
@@ -37,6 +49,17 @@ func promptInput(in io.Reader, out io.Writer, title, description, placeholder st
 }
 
 func promptConfirm(in io.Reader, out io.Writer, title, description string) (bool, error) {
+	if useDialogPrompts(in, out) {
+		dialog := dialogs.NewConfirmDialog("confirm", title, description, false)
+		result, err := dialogs.Run(in, out, dialog)
+		if err != nil {
+			return false, err
+		}
+		if result == nil || result.Cancelled {
+			return false, nil
+		}
+		return result.Confirmed, nil
+	}
 	reader := bufio.NewReader(in)
 	printPromptHeader(out, title, description, "")
 	for {
@@ -57,6 +80,21 @@ func promptConfirm(in io.Reader, out io.Writer, title, description string) (bool
 func PromptSelect(in io.Reader, out io.Writer, title, description string, options []SelectOption, defaultValue string) (string, error) {
 	if len(options) == 0 {
 		return "", errors.New("no options available")
+	}
+	if useDialogPrompts(in, out) {
+		dialogOptions := make([]dialogs.Option, 0, len(options))
+		for _, opt := range options {
+			dialogOptions = append(dialogOptions, dialogs.Option{Label: opt.Label, Value: opt.Value})
+		}
+		dialog := dialogs.NewSelectDialog("select", title, description, dialogOptions, defaultValue)
+		result, err := dialogs.Run(in, out, dialog)
+		if err != nil {
+			return "", err
+		}
+		if result == nil || result.Cancelled {
+			return defaultValue, nil
+		}
+		return result.Choice, nil
 	}
 	reader := bufio.NewReader(in)
 	printPromptHeader(out, title, description, "")
@@ -92,6 +130,21 @@ func PromptSelect(in io.Reader, out io.Writer, title, description string, option
 func PromptMultiSelect(in io.Reader, out io.Writer, title, description string, options []SelectOption, selected []string) ([]string, error) {
 	if len(options) == 0 {
 		return nil, errors.New("no options available")
+	}
+	if useDialogPrompts(in, out) {
+		dialogOptions := make([]dialogs.Option, 0, len(options))
+		for _, opt := range options {
+			dialogOptions = append(dialogOptions, dialogs.Option{Label: opt.Label, Value: opt.Value})
+		}
+		dialog := dialogs.NewMultiSelectDialog("multi-select", title, description, dialogOptions, selected)
+		result, err := dialogs.Run(in, out, dialog)
+		if err != nil {
+			return nil, err
+		}
+		if result == nil || result.Cancelled {
+			return selected, nil
+		}
+		return result.Choices, nil
 	}
 	selectedSet := map[string]bool{}
 	for _, value := range selected {
@@ -130,6 +183,40 @@ func PromptMultiSelect(in io.Reader, out io.Writer, title, description string, o
 		}
 		return next, nil
 	}
+}
+
+func promptInputDialog(in io.Reader, out io.Writer, title, description, placeholder, defaultValue string, validate func(string) error, secret bool) (string, error) {
+	field := dialogs.Field{
+		ID:          "value",
+		Title:       title,
+		Description: description,
+		Placeholder: placeholder,
+		Required:    validate != nil,
+		Default:     defaultValue,
+		Secret:      secret,
+		Validate:    validate,
+	}
+	dialog := dialogs.NewFormDialog("prompt", title, description, []dialogs.Field{field})
+	result, err := dialogs.Run(in, out, dialog)
+	if err != nil {
+		return "", err
+	}
+	if result == nil || result.Cancelled {
+		return "", errors.New("prompt cancelled")
+	}
+	return strings.TrimSpace(result.Values["value"]), nil
+}
+
+func useDialogPrompts(in io.Reader, out io.Writer) bool {
+	inFile, ok := in.(*os.File)
+	if !ok || !term.IsTerminal(int(inFile.Fd())) {
+		return false
+	}
+	outFile, ok := out.(*os.File)
+	if !ok || !term.IsTerminal(int(outFile.Fd())) {
+		return false
+	}
+	return true
 }
 
 func printPromptHeader(out io.Writer, title, description, placeholder string) {

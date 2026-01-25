@@ -35,6 +35,7 @@ import (
 	"github.com/shayne/viberun/internal/sshcmd"
 	"github.com/shayne/viberun/internal/target"
 	"github.com/shayne/viberun/internal/tui"
+	"github.com/shayne/viberun/internal/tui/dialogs"
 	"github.com/shayne/viberun/internal/tui/theme"
 	"github.com/shayne/yargs"
 )
@@ -318,7 +319,7 @@ func handleWipe(args []string) error {
 	if _, err := exec.LookPath("ssh"); err != nil {
 		return fmt.Errorf("ssh is required but was not found in PATH")
 	}
-	wiped, err := runWipeFlow(resolved.Host, true)
+	wiped, err := runWipeFlow(resolved.Host, true, nil)
 	if err != nil {
 		return fmt.Errorf("wipe failed: %w", err)
 	}
@@ -362,8 +363,12 @@ func handleAttach(args []string) error {
 }
 
 func promptProxySetup() bool {
+	prompt := "Set up a public domain name? [y/N]: "
+	if useDialogPrompts() {
+		return promptConfirmDialog(stripPromptSuffix(prompt), false)
+	}
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Fprint(os.Stdout, "Set up a public domain name? [y/N]: ")
+	fmt.Fprint(os.Stdout, prompt)
 	input, err := reader.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return false
@@ -379,10 +384,10 @@ type proxySetupOptions struct {
 	proxyImage      string
 }
 
-func runProxySetupFlow(host string, gateway *gatewayClient, opts proxySetupOptions) error {
+func runProxySetupFlow(host string, gateway *gatewayClient, opts proxySetupOptions, plan *proxyPlan) error {
 	configSummary, err := fetchRemoteProxyConfig(gateway)
 	configured := err == nil && configSummary.Enabled && strings.TrimSpace(configSummary.BaseDomain) != "" && strings.TrimSpace(configSummary.PrimaryUser) != ""
-	if err != nil && !opts.forceSetup {
+	if err != nil && plan == nil && !opts.forceSetup {
 		if !promptYesNoDefaultNo("Existing public domain settings could not be read. Continue with setup? [y/N]: ") {
 			if opts.showSkipHint {
 				fmt.Fprintln(os.Stdout, "Set up a public domain name later with: proxy setup")
@@ -398,7 +403,15 @@ func runProxySetupFlow(host string, gateway *gatewayClient, opts proxySetupOptio
 	username := ""
 	password := ""
 
-	if configured {
+	if plan != nil {
+		shouldRunSetup = true
+		editConfig = plan.EditConfig
+		configured = plan.Configured
+		domain = strings.TrimSpace(plan.Domain)
+		publicIP = strings.TrimSpace(plan.PublicIP)
+		username = strings.TrimSpace(plan.Username)
+		password = strings.TrimSpace(plan.Password)
+	} else if configured {
 		printProxyConfigSummary(configSummary)
 		editConfig = promptYesNoDefaultNo("Edit public domain settings? [y/N]: ")
 		if editConfig || opts.updateArtifacts {
@@ -460,6 +473,19 @@ func runProxySetupFlow(host string, gateway *gatewayClient, opts proxySetupOptio
 			return err
 		}
 		username, password, err = tui.PromptProxyAuth(os.Stdin, os.Stdout, "")
+		if err != nil {
+			return err
+		}
+	}
+
+	if !shouldRunSetup {
+		return nil
+	}
+	if strings.TrimSpace(publicIP) == "" {
+		publicIP = strings.TrimSpace(configSummary.PublicIP)
+	}
+	if strings.TrimSpace(publicIP) == "" {
+		publicIP, err = fetchRemotePublicIP(gateway)
 		if err != nil {
 			return err
 		}
@@ -1622,8 +1648,12 @@ func openURL(raw string) error {
 }
 
 func promptDelete(app string) bool {
+	prompt := fmt.Sprintf("Delete %s and all snapshots? [y/N]: ", app)
+	if useDialogPrompts() {
+		return promptConfirmDialog(stripPromptSuffix(prompt), false)
+	}
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Fprintf(os.Stdout, "Delete %s and all snapshots? [y/N]: ", app)
+	fmt.Fprint(os.Stdout, prompt)
 	input, err := reader.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return false
@@ -1633,6 +1663,9 @@ func promptDelete(app string) bool {
 }
 
 func promptYesNoDefaultYes(prompt string) bool {
+	if useDialogPrompts() {
+		return promptConfirmDialog(stripPromptSuffix(prompt), true)
+	}
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Fprint(os.Stdout, prompt)
 	input, err := reader.ReadString('\n')
@@ -1644,6 +1677,9 @@ func promptYesNoDefaultYes(prompt string) bool {
 }
 
 func promptYesNoDefaultNo(prompt string) bool {
+	if useDialogPrompts() {
+		return promptConfirmDialog(stripPromptSuffix(prompt), false)
+	}
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Fprint(os.Stdout, prompt)
 	input, err := reader.ReadString('\n')
@@ -1655,14 +1691,44 @@ func promptYesNoDefaultNo(prompt string) bool {
 }
 
 func promptCreateLocal(app string) bool {
+	prompt := fmt.Sprintf("App %s does not exist. Create? [Y/n]: ", app)
+	if useDialogPrompts() {
+		return promptConfirmDialog(stripPromptSuffix(prompt), true)
+	}
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Fprintf(os.Stdout, "App %s does not exist. Create? [Y/n]: ", app)
+	fmt.Fprint(os.Stdout, prompt)
 	input, err := reader.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return false
 	}
 	input = strings.TrimSpace(strings.ToLower(input))
 	return input == "" || input == "y" || input == "yes"
+}
+
+func useDialogPrompts() bool {
+	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+func promptConfirmDialog(title string, defaultYes bool) bool {
+	dialog := dialogs.NewConfirmDialog("confirm", title, "", defaultYes)
+	result, err := dialogs.Run(os.Stdin, os.Stdout, dialog)
+	if err != nil || result == nil || result.Cancelled {
+		return false
+	}
+	return result.Confirmed
+}
+
+func stripPromptSuffix(prompt string) string {
+	trimmed := strings.TrimSpace(prompt)
+	trimmed = strings.TrimSuffix(trimmed, ":")
+	trimmed = strings.TrimSpace(trimmed)
+	for _, suffix := range []string{"[Y/n]", "[y/N]", "[y/n]", "[Y/N]"} {
+		if strings.HasSuffix(trimmed, suffix) {
+			trimmed = strings.TrimSpace(strings.TrimSuffix(trimmed, suffix))
+			break
+		}
+	}
+	return trimmed
 }
 
 func isDevRun() bool {

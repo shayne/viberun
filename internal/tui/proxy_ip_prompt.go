@@ -12,7 +12,7 @@ import (
 )
 
 func PromptProxyPublicIP(in io.Reader, out io.Writer, defaultIP string) (string, error) {
-	input, err := promptInput(in, out, "Public IP address", "Used for DNS A records. Leave as-is if unchanged.", "", func(input string) error {
+	input, err := promptInputWithDefault(in, out, "Public IP address", "Used for DNS A records. Leave as-is if unchanged.", "", strings.TrimSpace(defaultIP), func(input string) error {
 		ip := net.ParseIP(strings.TrimSpace(input))
 		if ip == nil {
 			return errors.New("valid IP address is required")

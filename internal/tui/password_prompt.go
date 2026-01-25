@@ -6,31 +6,21 @@ package tui
 
 import (
 	"errors"
-	"fmt"
 	"io"
-	"os"
 	"strings"
-
-	"golang.org/x/term"
 )
 
 func PromptPassword(in io.Reader, out io.Writer, title string) (string, error) {
 	if strings.TrimSpace(title) == "" {
 		title = "Password"
 	}
-	if file, ok := in.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
-		fmt.Fprintln(out, title)
-		fmt.Fprint(out, "> ")
-		value, err := term.ReadPassword(int(file.Fd()))
-		fmt.Fprintln(out)
-		if err != nil {
-			return "", err
-		}
-		password := strings.TrimSpace(string(value))
-		if password == "" {
-			return "", errors.New("password is required")
-		}
-		return password, nil
+	if useDialogPrompts(in, out) {
+		return promptInputDialog(in, out, title, "", "", "", func(input string) error {
+			if strings.TrimSpace(input) == "" {
+				return errors.New("password is required")
+			}
+			return nil
+		}, true)
 	}
 	value, err := promptInput(in, out, title, "", "", func(input string) error {
 		if strings.TrimSpace(input) == "" {
