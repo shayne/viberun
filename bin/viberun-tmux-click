@@ -9,9 +9,9 @@ case "$range" in
     ;;
   "shell")
     if tmux list-windows -F '#{window_name}' 2>/dev/null | grep -qx "shell"; then
-      exec tmux select-window -t shell
+      exec tmux select-window -t shell \; refresh-client -S
     fi
-    exec tmux new-window -n shell
+    exec tmux new-window -n shell \; refresh-client -S
     ;;
   "detach")
     exec tmux detach-client

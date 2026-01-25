@@ -109,6 +109,9 @@ func TestClickScript_ShellCreatesWhenMissing(t *testing.T) {
 	if !strings.Contains(string(data), "new-window -n shell") {
 		t.Fatalf("expected new-window, got %q", string(data))
 	}
+	if !strings.Contains(string(data), "refresh-client -S") {
+		t.Fatalf("expected refresh-client, got %q", string(data))
+	}
 }
 
 func TestClickScript_Detach(t *testing.T) {
@@ -149,6 +152,12 @@ func TestTmuxConfHasMouseAndClickBinding(t *testing.T) {
 	if !strings.Contains(contents, "new-window -n shell") {
 		t.Fatalf("missing shell window creation")
 	}
+	if !strings.Contains(contents, "select-window -t shell ; refresh-client -S") {
+		t.Fatalf("missing shell status refresh command list")
+	}
+	if strings.Contains(contents, "select-window -t shell \\; refresh-client -S") {
+		t.Fatalf("unexpected escaped shell status refresh list")
+	}
 	if !strings.Contains(contents, "xdg-open") {
 		t.Fatalf("missing url open handler")
 	}
@@ -157,6 +166,9 @@ func TestTmuxConfHasMouseAndClickBinding(t *testing.T) {
 	}
 	if !strings.Contains(contents, "detach-client") {
 		t.Fatalf("missing detach handler")
+	}
+	if !strings.Contains(contents, "refresh-client -S") {
+		t.Fatalf("missing status refresh")
 	}
 }
 
