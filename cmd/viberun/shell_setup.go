@@ -66,6 +66,9 @@ func runShellSetup(state *shellState, action setupAction) (bool, string, error) 
 			env = append(env, key+"="+value)
 		}
 	}
+	for key, value := range devChannelEnv() {
+		env = append(env, key+"="+value)
+	}
 
 	localBootstrap := false
 	localImage := false
@@ -86,14 +89,29 @@ func runShellSetup(state *shellState, action setupAction) (bool, string, error) 
 	} else {
 		if bootstrapped && tty {
 			remoteVersion, err := fetchRemoteServerVersion(resolved.Host)
-			if err != nil {
-				updateArtifacts = promptYesNoDefaultNo("Server version unknown. Update server now? [y/N]: ")
-			} else if cmp, ok := compareSemver(version, remoteVersion); !ok {
-				updateArtifacts = promptYesNoDefaultNo("Server version unknown. Update server now? [y/N]: ")
-			} else if cmp > 0 {
-				updateArtifacts = promptYesNoDefaultYes(fmt.Sprintf("Server is %s. Update to %s? [Y/n]: ", strings.TrimSpace(remoteVersion), strings.TrimSpace(version)))
+			if isDevChannel() {
+				if err != nil {
+					updateArtifacts = promptYesNoDefaultYes("Server version unknown. Update server now? [Y/n]: ")
+				} else if update, defaultYes := devUpdateDecision(version, remoteVersion); update {
+					prompt := fmt.Sprintf("Server is %s. Update to %s? [Y/n]: ", strings.TrimSpace(remoteVersion), strings.TrimSpace(version))
+					if defaultYes {
+						updateArtifacts = promptYesNoDefaultYes(prompt)
+					} else {
+						updateArtifacts = promptYesNoDefaultNo(prompt)
+					}
+				} else {
+					updateArtifacts = false
+				}
 			} else {
-				updateArtifacts = false
+				if err != nil {
+					updateArtifacts = promptYesNoDefaultNo("Server version unknown. Update server now? [y/N]: ")
+				} else if cmp, ok := compareSemver(version, remoteVersion); !ok {
+					updateArtifacts = promptYesNoDefaultNo("Server version unknown. Update server now? [y/N]: ")
+				} else if cmp > 0 {
+					updateArtifacts = promptYesNoDefaultYes(fmt.Sprintf("Server is %s. Update to %s? [Y/n]: ", strings.TrimSpace(remoteVersion), strings.TrimSpace(version)))
+				} else {
+					updateArtifacts = false
+				}
 			}
 		}
 		if bootstrapped && !updateArtifacts {
@@ -182,7 +200,7 @@ func runShellSetup(state *shellState, action setupAction) (bool, string, error) 
 	}
 
 	if tty {
-		gateway, err := startGateway(resolved.Host, "", nil, false)
+		gateway, err := startGateway(resolved.Host, "", devChannelEnv(), false)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "proxy setup failed: %v\n", err)
 		} else {

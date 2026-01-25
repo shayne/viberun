@@ -1187,7 +1187,7 @@ func syncHostCmd(state *shellState) tea.Cmd {
 		if err != nil {
 			return hostSyncMsg{reachable: false, bootstrapped: false, err: err}
 		}
-		gateway, err := startGateway(resolved.Host, agent, nil, false)
+		gateway, err := startGateway(resolved.Host, agent, devChannelEnv(), false)
 		if err != nil {
 			if isMissingServerError(err) {
 				return hostSyncMsg{reachable: true, bootstrapped: false, err: nil}

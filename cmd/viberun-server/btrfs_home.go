@@ -71,7 +71,7 @@ func ensureHomeVolume(app string, create bool) (homeVolumeConfig, bool, error) {
 	if err := ensureAclTools(); err != nil {
 		return cfg, false, err
 	}
-	uid, gid, err := containerUserIDs(defaultImage)
+	uid, gid, err := containerUserIDs(defaultImageRef())
 	if err != nil {
 		return cfg, false, err
 	}

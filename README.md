@@ -25,8 +25,16 @@ viberun --version
 Optional overrides (advanced):
 
 ```bash
-curl -fsSL https://viberun.sh | bash -s -- --nightly
+curl -fsSL https://viberun.sh | bash -s -- --dev
 curl -fsSL https://viberun.sh | bash -s -- --dir ~/.local/bin --bin viberun
+```
+
+Dev channel (latest main):
+
+```bash
+npx -y viberun@dev
+uvx viberun-dev
+curl -fsSL https://viberun.sh | bash -s -- --dev
 ```
 
 Or with env vars:

@@ -466,7 +466,7 @@ func runProxySetupFlow(host string, gateway *gatewayClient, opts proxySetupOptio
 	}
 
 	proxyImage := strings.TrimSpace(opts.proxyImage)
-	if shouldRunSetup && opts.updateArtifacts && (isDevRun() || isDevVersion()) {
+	if shouldRunSetup && opts.updateArtifacts && isLocalDevMode() {
 		if err := ensureDevServerSynced(host); err != nil {
 			return err
 		}
@@ -695,13 +695,13 @@ func runRemoteAppUpdate(gateway *gatewayClient, host string, app string) error {
 	if app == "" {
 		return fmt.Errorf("app name is required")
 	}
-	if isDevRun() || isDevVersion() {
+	if isLocalDevMode() {
 		if err := stageLocalImage(host); err != nil {
 			return err
 		}
 	}
 	env := map[string]string{}
-	if isDevRun() || isDevVersion() {
+	if isLocalDevMode() {
 		env["VIBERUN_SKIP_IMAGE_PULL"] = "1"
 	}
 	output, err := gateway.command([]string{app, "update"}, "", env)
@@ -1676,13 +1676,106 @@ func isDevRun() bool {
 	return strings.Contains(os.Args[0], "go-build")
 }
 
-func isDevVersion() bool {
-	trimmed := strings.TrimSpace(version)
+func isLocalDevMode() bool {
+	if strings.TrimSpace(os.Getenv("VIBERUN_DEV")) != "" {
+		return true
+	}
+	return isDevRun() || isLocalDevVersion(version)
+}
+
+func isLocalDevVersion(value string) bool {
+	trimmed := strings.TrimSpace(value)
 	return trimmed == "" || trimmed == "dev"
 }
 
+func isDevChannel() bool {
+	if value := strings.TrimSpace(os.Getenv("VIBERUN_CHANNEL")); value != "" {
+		return strings.EqualFold(value, "dev")
+	}
+	return isDevChannelVersion(version)
+}
+
+func isDevChannelVersion(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	lowered := strings.ToLower(trimmed)
+	if strings.Contains(lowered, "-dev.") {
+		return true
+	}
+	return strings.HasPrefix(lowered, "dev-")
+}
+
+func parseDevVersionTimestamp(value string) (int64, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0, false
+	}
+	lowered := strings.ToLower(trimmed)
+	idx := strings.Index(lowered, "-dev.")
+	if idx < 0 {
+		return 0, false
+	}
+	rest := lowered[idx+len("-dev."):]
+	if rest == "" {
+		return 0, false
+	}
+	end := 0
+	for end < len(rest) {
+		if rest[end] < '0' || rest[end] > '9' {
+			break
+		}
+		end++
+	}
+	if end == 0 {
+		return 0, false
+	}
+	ts, err := strconv.ParseInt(rest[:end], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return ts, true
+}
+
+func devUpdateDecision(local string, remote string) (bool, bool) {
+	localTS, localOK := parseDevVersionTimestamp(local)
+	remoteTS, remoteOK := parseDevVersionTimestamp(remote)
+	if !localOK || !remoteOK {
+		return true, true
+	}
+	if localTS > remoteTS {
+		return true, true
+	}
+	return false, false
+}
+
+func devChannelEnv() map[string]string {
+	if !isDevChannel() {
+		return nil
+	}
+	env := map[string]string{}
+	if strings.TrimSpace(os.Getenv("VIBERUN_SERVER_VERSION")) == "" {
+		env["VIBERUN_SERVER_VERSION"] = "dev"
+	}
+	repo := strings.TrimSpace(os.Getenv("VIBERUN_SERVER_REPO"))
+	if repo == "" {
+		repo = "shayne/viberun"
+	}
+	if strings.TrimSpace(os.Getenv("VIBERUN_IMAGE")) == "" {
+		env["VIBERUN_IMAGE"] = fmt.Sprintf("ghcr.io/%s/viberun:dev", repo)
+	}
+	if strings.TrimSpace(os.Getenv("VIBERUN_PROXY_IMAGE")) == "" {
+		env["VIBERUN_PROXY_IMAGE"] = fmt.Sprintf("ghcr.io/%s/viberun-proxy:dev", repo)
+	}
+	if len(env) == 0 {
+		return nil
+	}
+	return env
+}
+
 func ensureDevServerSynced(host string) error {
-	if !isDevRun() && !isDevVersion() {
+	if !isLocalDevMode() {
 		return nil
 	}
 	host = strings.TrimSpace(host)

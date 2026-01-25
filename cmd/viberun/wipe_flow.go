@@ -26,7 +26,7 @@ func runWipeFlow(host string, wipeLocal bool) (bool, error) {
 	if err := tui.PromptWipeConfirm(os.Stdin, os.Stdout); err != nil {
 		return false, err
 	}
-	gateway, err := startGateway(host, "", nil, false)
+	gateway, err := startGateway(host, "", devChannelEnv(), false)
 	if err != nil {
 		return false, err
 	}

@@ -67,7 +67,7 @@ func gatewayForCommand(state *shellState, hostArg string) (*gatewayClient, func(
 	if strings.TrimSpace(hostArg) == "" {
 		return nil, func() {}, errors.New("gateway not connected")
 	}
-	gateway, err := startGateway(resolved.Host, strings.TrimSpace(state.agent), nil, false)
+	gateway, err := startGateway(resolved.Host, strings.TrimSpace(state.agent), devChannelEnv(), false)
 	if err != nil {
 		return nil, func() {}, err
 	}

@@ -294,8 +294,5 @@ func shouldStartShell() bool {
 }
 
 func isDevMode() bool {
-	if strings.TrimSpace(os.Getenv("VIBERUN_DEV")) != "" {
-		return true
-	}
-	return isDevRun() || isDevVersion()
+	return isLocalDevMode()
 }

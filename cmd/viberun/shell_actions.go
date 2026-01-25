@@ -519,7 +519,7 @@ func ensureShellGatewayForHost(state *shellState, hostArg string) (*gatewayClien
 	if sameHost && state.gateway != nil && state.gatewayHost == resolved.Host {
 		return state.gateway, func() {}, nil
 	}
-	gateway, err := startGateway(resolved.Host, strings.TrimSpace(state.agent), nil, false)
+	gateway, err := startGateway(resolved.Host, strings.TrimSpace(state.agent), devChannelEnv(), false)
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -542,7 +542,7 @@ func gatewayForResolvedHost(state *shellState, host string) (*gatewayClient, fun
 	if sameHost && state.gateway != nil && state.gatewayHost == host {
 		return state.gateway, func() {}, nil
 	}
-	gateway, err := startGateway(host, strings.TrimSpace(state.agent), nil, false)
+	gateway, err := startGateway(host, strings.TrimSpace(state.agent), devChannelEnv(), false)
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -560,7 +560,7 @@ func startAttachGateway(state *shellState, host string) (*gatewayClient, func(),
 	if strings.TrimSpace(host) == "" {
 		return nil, func() {}, errors.New("host is required")
 	}
-	gateway, err := startGateway(host, strings.TrimSpace(state.agent), nil, false)
+	gateway, err := startGateway(host, strings.TrimSpace(state.agent), devChannelEnv(), false)
 	if err != nil {
 		return nil, func() {}, err
 	}

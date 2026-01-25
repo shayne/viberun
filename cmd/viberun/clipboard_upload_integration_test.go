@@ -40,7 +40,7 @@ func TestGatewayClipboardUpload(t *testing.T) {
 		t.Fatalf("resolve target: %v", err)
 	}
 
-	gateway, err := startGateway(resolved.Host, agent, nil, false)
+	gateway, err := startGateway(resolved.Host, agent, devChannelEnv(), false)
 	if err != nil {
 		t.Fatalf("start gateway: %v", err)
 	}

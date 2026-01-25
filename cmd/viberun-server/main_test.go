@@ -90,6 +90,13 @@ func TestNormalizeTermValue(t *testing.T) {
 	}
 }
 
+func TestDefaultImageRefUsesEnv(t *testing.T) {
+	t.Setenv("VIBERUN_IMAGE", "ghcr.io/shayne/viberun/viberun:dev")
+	if got := defaultImageRef(); got != "ghcr.io/shayne/viberun/viberun:dev" {
+		t.Fatalf("defaultImageRef=%q want env override", got)
+	}
+}
+
 func TestParsePortMapping(t *testing.T) {
 	output := "0.0.0.0:49160\n"
 	if port, ok := parsePortMapping(output); !ok || port != 49160 {

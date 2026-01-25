@@ -12,10 +12,10 @@ viberun install script
 
 Usage:
   curl -fsSL https://viberun.sh | sh
-  curl -fsSL https://viberun.sh | sh -s -- --nightly
+  curl -fsSL https://viberun.sh | sh -s -- --dev
 
 Options:
-  --nightly           Install the nightly build
+  --dev               Install the dev build
   --dir <path>        Install directory (default: /usr/local/bin, /opt/homebrew/bin on macOS)
   --bin <name>        Install binary name (default: viberun)
   -h, --help          Show this help
@@ -44,8 +44,8 @@ main() {
 
   while [ $# -gt 0 ]; do
     case "$1" in
-      --nightly)
-        CHANNEL="nightly"
+      --dev)
+        CHANNEL="dev"
         shift
         ;;
       --dir)
@@ -114,9 +114,9 @@ main() {
   asset="viberun-${os}-${arch}.tar.gz"
   sha="${asset}.sha256"
 
-  if [ "$CHANNEL" = "nightly" ]; then
-    asset_url="${BASE_URL}/download/nightly/${asset}"
-    sha_url="${BASE_URL}/download/nightly/${sha}"
+  if [ "$CHANNEL" = "dev" ]; then
+    asset_url="${BASE_URL}/download/dev/${asset}"
+    sha_url="${BASE_URL}/download/dev/${sha}"
   else
     asset_url="${BASE_URL}/latest/download/${asset}"
     sha_url="${BASE_URL}/latest/download/${sha}"

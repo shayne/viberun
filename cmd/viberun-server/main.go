@@ -31,6 +31,13 @@ import (
 
 const defaultImage = "viberun:latest"
 
+func defaultImageRef() string {
+	if value := strings.TrimSpace(os.Getenv("VIBERUN_IMAGE")); value != "" {
+		return value
+	}
+	return defaultImage
+}
+
 type serverFlags struct {
 	Agent string `flag:"agent" help:"agent provider to run (codex, claude, gemini, ampcode, opencode, or npx:<pkg>/uvx:<pkg>)"`
 }
@@ -383,16 +390,17 @@ func runServer() error {
 		ui := newAppProgress(app)
 		ui.Start()
 		defer ui.Stop()
+		imageRef := defaultImageRef()
 		if strings.TrimSpace(os.Getenv("VIBERUN_SKIP_IMAGE_PULL")) != "" {
 			ui.Step("Check image")
-			if _, err := exec.Command("docker", "image", "inspect", defaultImage).CombinedOutput(); err != nil {
+			if _, err := exec.Command("docker", "image", "inspect", imageRef).CombinedOutput(); err != nil {
 				ui.Fail("failed")
-				return fmt.Errorf("image %s not available; rerun setup to stage it", defaultImage)
+				return fmt.Errorf("image %s not available; rerun setup to stage it", imageRef)
 			}
 			ui.Done("")
 		} else {
 			ui.Step("Pull image")
-			if err := runDockerCommandOutput("pull", defaultImage); err != nil {
+			if err := runDockerCommandOutput("pull", imageRef); err != nil {
 				ui.Fail("failed")
 				return fmt.Errorf("failed to pull image: %w", err)
 			}
@@ -825,7 +833,7 @@ func dockerRun(name string, app string, port int) error {
 	if err := ensureContainerConfig(app, name, port); err != nil {
 		return err
 	}
-	args := dockerRunArgs(name, app, port, defaultImage)
+	args := dockerRunArgs(name, app, port, defaultImageRef())
 	return runDockerCommandOutput(args...)
 }
 

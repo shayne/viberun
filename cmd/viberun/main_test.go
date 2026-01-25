@@ -165,3 +165,80 @@ func TestPrintURLSummary(t *testing.T) {
 		t.Fatalf("expected commands list in output: %s", out)
 	}
 }
+
+func TestIsDevChannelVersion(t *testing.T) {
+	cases := map[string]bool{
+		"0.0.0-dev.20260125123045+abc123": true,
+		"dev-abc123":                      true,
+		"v0.1.0":                          false,
+		"dev":                             false,
+		"":                                false,
+	}
+	for input, expected := range cases {
+		if got := isDevChannelVersion(input); got != expected {
+			t.Fatalf("isDevChannelVersion(%q)=%v want %v", input, got, expected)
+		}
+	}
+}
+
+func TestParseDevVersionTimestamp(t *testing.T) {
+	cases := []struct {
+		value  string
+		want   int64
+		wantOK bool
+	}{
+		{"0.0.0-dev.20260125123045+abc123", 20260125123045, true},
+		{"0.0.0-dev.20260125123045", 20260125123045, true},
+		{"dev-abc123", 0, false},
+		{"v0.2.0", 0, false},
+		{"", 0, false},
+	}
+	for _, tc := range cases {
+		got, ok := parseDevVersionTimestamp(tc.value)
+		if ok != tc.wantOK || got != tc.want {
+			t.Fatalf("parseDevVersionTimestamp(%q)=%d,%v want %d,%v", tc.value, got, ok, tc.want, tc.wantOK)
+		}
+	}
+}
+
+func TestIsLocalDevVersion(t *testing.T) {
+	cases := map[string]bool{
+		"dev":                          true,
+		"":                             true,
+		"0.0.0-dev.20260125123045+abc": false,
+		"v0.1.0":                       false,
+	}
+	for input, expected := range cases {
+		if got := isLocalDevVersion(input); got != expected {
+			t.Fatalf("isLocalDevVersion(%q)=%v want %v", input, got, expected)
+		}
+	}
+}
+
+func TestDevUpdateDecision(t *testing.T) {
+	local := "0.0.0-dev.20260125123045+abc"
+	older := "0.0.0-dev.20260125010101+def"
+	newer := "0.0.0-dev.20260126010101+ghi"
+	if update, defYes := devUpdateDecision(local, older); !update || !defYes {
+		t.Fatalf("expected update with default yes when local newer")
+	}
+	if update, _ := devUpdateDecision(local, newer); update {
+		t.Fatalf("expected no update when remote newer")
+	}
+	if update, defYes := devUpdateDecision(local, "unknown"); !update || !defYes {
+		t.Fatalf("expected update default yes on unknown dev version")
+	}
+}
+
+func TestDevChannelEnvDefaults(t *testing.T) {
+	origVersion := version
+	version = "0.0.0-dev.20260125123045+abc"
+	t.Cleanup(func() { version = origVersion })
+	got := devChannelEnv()
+	if got["VIBERUN_SERVER_VERSION"] != "dev" {
+		t.Fatalf("expected VIBERUN_SERVER_VERSION=dev, got %q", got["VIBERUN_SERVER_VERSION"])
+	}
+	if got["VIBERUN_IMAGE"] == "" || got["VIBERUN_PROXY_IMAGE"] == "" {
+		t.Fatalf("expected dev image defaults")
+	}
+}

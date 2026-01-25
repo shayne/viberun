@@ -48,14 +48,15 @@ func checkAndWriteUpdate(app string, containerName string) {
 
 func checkImageUpdate(containerName string) (updateStatus, error) {
 	status := updateStatus{CheckedAt: time.Now().UTC()}
-	if err := runDockerCommandOutput("pull", defaultImage); err != nil {
+	imageRef := defaultImageRef()
+	if err := runDockerCommandOutput("pull", imageRef); err != nil {
 		return status, err
 	}
 	currentID, err := containerImageID(containerName)
 	if err != nil {
 		return status, err
 	}
-	latestID, err := imageID(defaultImage)
+	latestID, err := imageID(imageRef)
 	if err != nil {
 		return status, err
 	}

@@ -32,7 +32,7 @@ func startupConnectCmd(state *shellState) tea.Cmd {
 		if err != nil {
 			return startupConnectMsg{reachable: false, bootstrapped: false, err: err}
 		}
-		gateway, err := startGateway(resolved.Host, agent, nil, false)
+		gateway, err := startGateway(resolved.Host, agent, devChannelEnv(), false)
 		if err != nil {
 			if isMissingServerError(err) {
 				return startupConnectMsg{reachable: true, bootstrapped: false, gatewayHost: resolved.Host}

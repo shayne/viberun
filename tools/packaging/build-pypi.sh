@@ -16,8 +16,9 @@ if [ ! -d "$VENDOR_DIR" ]; then
   echo "missing vendor dir: $VENDOR_DIR (run tools/packaging/build-vendor.sh first)" >&2
   exit 1
 fi
-PACKAGE_VERSION="${VERSION#v}"
-export PACKAGE_VERSION
+PYPI_PACKAGE_NAME="${PYPI_PACKAGE_NAME:-viberun}"
+PYPI_VERSION="${PYPI_VERSION:-${VERSION#v}}"
+export PYPI_PACKAGE_NAME PYPI_VERSION
 
 rm -rf "$STAGE_DIR" "$OUT_DIR"
 mkdir -p "$STAGE_DIR" "$OUT_DIR"
@@ -38,8 +39,15 @@ import os
 stage = pathlib.Path(os.environ['STAGE_DIR'])
 pyproject = stage / 'pyproject.toml'
 text = pyproject.read_text()
-text = re.sub(r'version = "[^"]+"', f'version = "{os.environ["PACKAGE_VERSION"]}"', text)
+text = re.sub(r'name = "[^"]+"', f'name = "{os.environ["PYPI_PACKAGE_NAME"]}"', text)
+text = re.sub(r'version = "[^"]+"', f'version = "{os.environ["PYPI_VERSION"]}"', text)
 pyproject.write_text(text)
+
+init_file = stage / 'viberun' / '__init__.py'
+if init_file.exists():
+    init_text = init_file.read_text()
+    init_text = re.sub(r'DIST_NAME = "[^"]+"', f'DIST_NAME = "{os.environ["PYPI_PACKAGE_NAME"]}"', init_text)
+    init_file.write_text(init_text)
 PY
 
 if command -v uv >/dev/null 2>&1; then
