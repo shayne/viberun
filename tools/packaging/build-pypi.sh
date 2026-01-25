@@ -51,14 +51,16 @@ if init_file.exists():
 
 pkg_name = os.environ["PYPI_PACKAGE_NAME"]
 if pkg_name != "viberun":
-    if not re.search(r'(?m)^viberun-dev\\s*=\\s*"', text):
-        text = re.sub(
-            r'(?m)^(viberun\\s*=\\s*\"[^\"]+\")\\s*$',
-            r'\\1\\nviberun-dev = \"viberun.__main__:main\"',
-            text,
-            count=1,
-        )
+    text = pyproject.read_text()
+    entry = 'viberun-dev = "viberun.__main__:main"'
+    if entry not in text:
+        marker = "[project.scripts]\\n"
+        if marker not in text:
+            raise SystemExit("missing [project.scripts] section for viberun-dev entrypoint")
+        text = text.replace(marker, marker + entry + "\\n", 1)
         pyproject.write_text(text)
+    if entry not in pyproject.read_text():
+        raise SystemExit("failed to inject viberun-dev entrypoint")
 PY
 
 if command -v uv >/dev/null 2>&1; then
