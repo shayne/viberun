@@ -54,10 +54,13 @@ if pkg_name != "viberun":
     text = pyproject.read_text()
     entry = 'viberun-dev = "viberun.__main__:main"'
     if entry not in text:
-        marker = "[project.scripts]\\n"
-        if marker not in text:
-            raise SystemExit("missing [project.scripts] section for viberun-dev entrypoint")
-        text = text.replace(marker, marker + entry + "\\n", 1)
+        newline = "\r\n" if "\r\n" in text else "\n"
+        if "[project.scripts]" not in text:
+            if not text.endswith(newline):
+                text += newline
+            text += "[project.scripts]" + newline + entry + newline
+        else:
+            text = text.replace("[project.scripts]", "[project.scripts]" + newline + entry, 1)
         pyproject.write_text(text)
     if entry not in pyproject.read_text():
         raise SystemExit("failed to inject viberun-dev entrypoint")
