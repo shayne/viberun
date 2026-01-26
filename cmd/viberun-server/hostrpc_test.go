@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -147,5 +148,62 @@ func TestHostRPCRestore(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("restore callback not invoked")
+	}
+}
+
+func TestHostRPCBranchApply(t *testing.T) {
+	server := &hostRPCServer{
+		token:              "token",
+		app:                "app",
+		branchApplyFn:      func(base string, branch string) error { return nil },
+		branchApplyFromApp: func(string) error { return nil },
+		branchListFn: func(string) ([]branchMeta, error) {
+			return []branchMeta{{Branch: "feature"}}, nil
+		},
+	}
+	server.httpServer = &http.Server{Handler: server.routes()}
+	req := httptest.NewRequest(http.MethodPost, "http://unix/branch/apply", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	w := httptest.NewRecorder()
+	server.routes().ServeHTTP(w, req)
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "http://unix/branch/apply", strings.NewReader("feature"))
+	req.Header.Set("Authorization", "Bearer token")
+	w = httptest.NewRecorder()
+	server.routes().ServeHTTP(w, req)
+	resp = w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	}
+}
+
+func TestHostRPCBranchList(t *testing.T) {
+	server := &hostRPCServer{
+		token: "token",
+		app:   "app",
+		branchListFn: func(string) ([]branchMeta, error) {
+			return []branchMeta{
+				{Branch: "zeta"},
+				{Branch: "alpha"},
+			}, nil
+		},
+	}
+	server.httpServer = &http.Server{Handler: server.routes()}
+	req := httptest.NewRequest(http.MethodGet, "http://unix/branch/list", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	w := httptest.NewRecorder()
+	server.routes().ServeHTTP(w, req)
+	resp := w.Result()
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	}
+	if got := string(body); got != "alpha\nzeta\n" {
+		t.Fatalf("unexpected response: %q", got)
 	}
 }

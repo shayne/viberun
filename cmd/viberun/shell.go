@@ -101,6 +101,7 @@ type shellState struct {
 	preparedSession    *preparedSession
 	syncing            bool
 	pendingCmd         *pendingCommand
+	busyLabel          string
 	host               string
 	agent              string
 	cfg                config.Config

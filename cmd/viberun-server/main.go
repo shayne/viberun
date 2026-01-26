@@ -22,6 +22,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/shayne/viberun/internal/agents"
+	branchpkg "github.com/shayne/viberun/internal/branch"
 	"github.com/shayne/viberun/internal/hostcmd"
 	"github.com/shayne/viberun/internal/proxy"
 	"github.com/shayne/viberun/internal/server"
@@ -180,7 +181,7 @@ func main() {
 func runServer() error {
 	args := os.Args[1:]
 	if len(args) == 0 || hasHelpFlag(args) {
-		return newUsageError("Usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|update|shell|port|status|delete|exists] | viberun-server apps | viberun-server proxy setup --domain <domain> --public-ip <ip> | viberun-server proxy url <app> | viberun-server wipe")
+		return newUsageError("Usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|update|shell|port|status|delete|exists] | viberun-server apps | viberun-server branch <list|create|delete|apply> <app> [branch] | viberun-server proxy setup --domain <domain> --public-ip <ip> | viberun-server proxy url <app> | viberun-server wipe")
 	}
 	if args[0] == "proxy" {
 		if os.Geteuid() != 0 {
@@ -222,6 +223,18 @@ func runServer() error {
 		}
 		return nil
 	}
+	if args[0] == "branch" {
+		if os.Geteuid() != 0 {
+			return fmt.Errorf("viberun-server must run as root; run via sudo or rerun setup")
+		}
+		if _, err := exec.LookPath("docker"); err != nil {
+			return fmt.Errorf("docker is required but was not found in PATH")
+		}
+		if err := ensureRootfulDocker(); err != nil {
+			return err
+		}
+		return handleBranchCommand(args[1:])
+	}
 	if args[0] == "version" || args[0] == "--version" || args[0] == "-v" {
 		fmt.Fprintln(os.Stdout, versionString())
 		return nil
@@ -232,7 +245,7 @@ func runServer() error {
 	}
 
 	if len(result.Args) < 1 || len(result.Args) > 3 {
-		return newUsageError("Usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|update|shell|port|status|delete|exists] | viberun-server apps | viberun-server proxy setup --domain <domain> --public-ip <ip> | viberun-server proxy url <app> | viberun-server wipe")
+		return newUsageError("Usage: viberun-server [--agent provider] <app> [snapshot|snapshots|restore <snapshot>|update|shell|port|status|delete|exists] | viberun-server apps | viberun-server branch <list|create|delete|apply> <app> [branch] | viberun-server proxy setup --domain <domain> --public-ip <ip> | viberun-server proxy url <app> | viberun-server wipe")
 	}
 	args = result.Args
 	app, err := proxy.NormalizeAppName(args[0])
@@ -331,6 +344,21 @@ func runServer() error {
 		return nil
 	}
 	if action == "delete" {
+		branches, err := listBranchMetas(app)
+		if err != nil {
+			return fmt.Errorf("failed to list branches: %w", err)
+		}
+		if len(branches) > 0 {
+			names := make([]string, 0, len(branches))
+			for _, meta := range branches {
+				if strings.TrimSpace(meta.Branch) != "" {
+					names = append(names, meta.Branch)
+				}
+			}
+			if len(names) > 0 {
+				fmt.Fprintf(os.Stdout, "Deleting %s also deletes branches: %s\n", app, strings.Join(names, ", "))
+			}
+		}
 		deletedState, err := deleteApp(containerName, app, &state, exists)
 		if err != nil {
 			return fmt.Errorf("failed to delete app: %w", err)
@@ -1011,6 +1039,24 @@ func containerLogsTail(name string, lines int) (string, error) {
 
 func deleteApp(containerName string, app string, state *server.State, exists bool) (bool, error) {
 	removed := false
+	branches, err := listBranchMetas(app)
+	if err != nil {
+		return false, err
+	}
+	for _, meta := range branches {
+		derived, err := branchpkg.DerivedAppName(app, meta.Branch)
+		if err != nil {
+			return false, err
+		}
+		derivedContainer := fmt.Sprintf("viberun-%s", derived)
+		derivedExists, err := containerExists(derivedContainer)
+		if err != nil {
+			return false, err
+		}
+		if _, err := deleteApp(derivedContainer, derived, state, derivedExists); err != nil {
+			return false, err
+		}
+	}
 	if exists {
 		if err := runDockerCommandOutput("rm", "-f", containerName); err != nil {
 			return false, err

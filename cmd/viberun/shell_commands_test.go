@@ -75,6 +75,33 @@ func TestParseShellCommandPreservesUnknownCase(t *testing.T) {
 	}
 }
 
+func TestParseVibeArgsBranch(t *testing.T) {
+	parsed, err := parseVibeArgs([]string{"myapp", "--branch", "contact-form"})
+	if err != nil {
+		t.Fatalf("parseVibeArgs error: %v", err)
+	}
+	if parsed.app != "myapp" || parsed.branch != "contact-form" {
+		t.Fatalf("unexpected parsed args: %+v", parsed)
+	}
+}
+
+func TestParseVibeArgsBranchEquals(t *testing.T) {
+	parsed, err := parseVibeArgs([]string{"myapp", "--branch=contact-form"})
+	if err != nil {
+		t.Fatalf("parseVibeArgs error: %v", err)
+	}
+	if parsed.app != "myapp" || parsed.branch != "contact-form" {
+		t.Fatalf("unexpected parsed args: %+v", parsed)
+	}
+}
+
+func TestParseVibeArgsUnknownFlag(t *testing.T) {
+	_, err := parseVibeArgs([]string{"myapp", "--unknown"})
+	if err == nil {
+		t.Fatalf("expected error for unknown flag")
+	}
+}
+
 func TestDispatchDefersRemoteCommandUntilSync(t *testing.T) {
 	state := &shellState{
 		scope:      scopeGlobal,

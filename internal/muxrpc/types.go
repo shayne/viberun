@@ -65,7 +65,9 @@ type UploadResult struct {
 }
 
 type OpenEvent struct {
-	URL string `json:"url"`
+	URL          string `json:"url,omitempty"`
+	AttachApp    string `json:"attach_app,omitempty"`
+	AttachAction string `json:"attach_action,omitempty"`
 }
 
 type ResizeEvent struct {

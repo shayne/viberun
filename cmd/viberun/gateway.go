@@ -232,7 +232,7 @@ func (g *gatewayClient) nextRequestID() string {
 	return strconv.FormatInt(g.nextID, 10)
 }
 
-func (g *gatewayClient) startOpenStream(handler func(string)) error {
+func (g *gatewayClient) startOpenStream(handler func(muxrpc.OpenEvent)) error {
 	var err error
 	g.openOnce.Do(func() {
 		stream, openErr := g.openStream("open", nil)
@@ -250,11 +250,8 @@ func (g *gatewayClient) startOpenStream(handler func(string)) error {
 				if jsonErr := json.Unmarshal(msg, &evt); jsonErr != nil {
 					continue
 				}
-				if strings.TrimSpace(evt.URL) == "" {
-					continue
-				}
 				if handler != nil {
-					handler(evt.URL)
+					handler(evt)
 				}
 			}
 		}()

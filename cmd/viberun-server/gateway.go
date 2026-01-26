@@ -164,6 +164,21 @@ func (s *gatewayServer) sendOpenEvent(url string) {
 	_ = stream.SendMsg(payload)
 }
 
+func (s *gatewayServer) sendAttachEvent(app string, action string) {
+	s.openMu.Lock()
+	stream := s.openStream
+	s.openMu.Unlock()
+	app = strings.TrimSpace(app)
+	if stream == nil || app == "" {
+		return
+	}
+	payload, _ := json.Marshal(muxrpc.OpenEvent{
+		AttachApp:    app,
+		AttachAction: strings.TrimSpace(action),
+	})
+	_ = stream.SendMsg(payload)
+}
+
 func loadAppSnapshots() ([]muxrpc.AppSnapshot, error) {
 	state, statePath, err := server.LoadState()
 	if err != nil {
@@ -208,7 +223,7 @@ func (s *gatewayServer) handlePtyStream(stream *mux.Stream, open mux.StreamOpen)
 		return
 	}
 	socketPath := gatewayOpenSocketPath(app)
-	openServer, err := startGatewayOpenSocket(socketPath, s.sendOpenEvent)
+	openServer, err := startGatewayOpenSocket(socketPath, s.sendOpenEvent, s.sendAttachEvent)
 	if err != nil {
 		_ = stream.Close()
 		return
@@ -570,7 +585,7 @@ func gatewayOpenSocketPath(app string) string {
 	return fmt.Sprintf("%s/%d-%d%s", dir, os.Getpid(), time.Now().UnixNano(), suffix)
 }
 
-func startGatewayOpenSocket(path string, onOpen func(string)) (*http.Server, error) {
+func startGatewayOpenSocket(path string, onOpen func(string), onAttach func(string, string)) (*http.Server, error) {
 	if path == "" {
 		return nil, errors.New("missing socket path")
 	}
@@ -588,7 +603,7 @@ func startGatewayOpenSocket(path string, onOpen func(string)) (*http.Server, err
 	}
 	server := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost || r.URL.Path != "/open" {
+			if r.Method != http.MethodPost || (r.URL.Path != "/open" && r.URL.Path != "/attach") {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
@@ -597,12 +612,24 @@ func startGatewayOpenSocket(path string, onOpen func(string)) (*http.Server, err
 				http.Error(w, "invalid request", http.StatusBadRequest)
 				return
 			}
-			raw := strings.TrimSpace(r.Form.Get("url"))
-			if raw == "" {
-				http.Error(w, "missing url", http.StatusBadRequest)
-				return
+			if r.URL.Path == "/open" {
+				raw := strings.TrimSpace(r.Form.Get("url"))
+				if raw == "" {
+					http.Error(w, "missing url", http.StatusBadRequest)
+					return
+				}
+				onOpen(raw)
+			} else {
+				app := strings.TrimSpace(r.Form.Get("app"))
+				if app == "" {
+					http.Error(w, "missing app", http.StatusBadRequest)
+					return
+				}
+				action := strings.TrimSpace(r.Form.Get("action"))
+				if onAttach != nil {
+					onAttach(app, action)
+				}
 			}
-			onOpen(raw)
 			w.WriteHeader(http.StatusNoContent)
 		}),
 	}

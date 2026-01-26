@@ -17,7 +17,7 @@ func TestAttachSessionRunOrder(t *testing.T) {
 	session := &AttachSession{
 		PtyMeta: muxrpc.PtyMeta{App: "myapp"},
 		OpenURL: func(string) error { return nil },
-		startOpen: func(func(string)) error {
+		startOpen: func(func(muxrpc.OpenEvent)) error {
 			calls = append(calls, "open")
 			return nil
 		},
@@ -51,8 +51,8 @@ func TestAttachSessionRunOpenURL(t *testing.T) {
 	session := &AttachSession{
 		PtyMeta: muxrpc.PtyMeta{App: "myapp"},
 		OpenURL: func(string) error { called = true; return nil },
-		startOpen: func(cb func(string)) error {
-			cb("https://example.com")
+		startOpen: func(cb func(muxrpc.OpenEvent)) error {
+			cb(muxrpc.OpenEvent{URL: "https://example.com"})
 			return nil
 		},
 		openPTY: func(muxrpc.PtyMeta) (*mux.Stream, error) {
@@ -67,5 +67,28 @@ func TestAttachSessionRunOpenURL(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("expected OpenURL to be called")
+	}
+}
+
+func TestAttachSessionRunAttachSwitch(t *testing.T) {
+	session := &AttachSession{
+		PtyMeta: muxrpc.PtyMeta{App: "myapp"},
+		startOpen: func(cb func(muxrpc.OpenEvent)) error {
+			cb(muxrpc.OpenEvent{AttachApp: "myapp--feature"})
+			return nil
+		},
+		openPTY: func(muxrpc.PtyMeta) (*mux.Stream, error) {
+			return nil, nil
+		},
+		runPTY: func(*mux.Stream) error {
+			return nil
+		},
+	}
+	err := session.Run()
+	if err == nil {
+		t.Fatal("expected attach switch error")
+	}
+	if _, ok := err.(*attachSwitchError); !ok {
+		t.Fatalf("expected attachSwitchError, got %T", err)
 	}
 }

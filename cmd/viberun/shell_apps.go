@@ -39,6 +39,31 @@ func updateAppSummary(state *shellState, summary appSummary) {
 	state.apps = append(state.apps, summary)
 }
 
+func removeAppSummary(state *shellState, app string) {
+	if state == nil {
+		return
+	}
+	app = strings.TrimSpace(app)
+	if app == "" {
+		return
+	}
+	for i, summary := range state.apps {
+		if summary.Name == app {
+			state.apps = append(state.apps[:i], state.apps[i+1:]...)
+			return
+		}
+	}
+}
+
+func markAppsStale(state *shellState) {
+	if state == nil {
+		return
+	}
+	state.appsLoaded = false
+	state.appsSyncing = false
+	state.apps = nil
+}
+
 func fetchAppStatus(gateway *gatewayClient, app string) (appStatus, error) {
 	if gateway == nil {
 		return appStatusUnknown, errors.New("gateway not connected")

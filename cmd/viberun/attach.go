@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/shayne/viberun/internal/mux"
 	"github.com/shayne/viberun/internal/muxrpc"
@@ -23,9 +24,18 @@ type AttachSession struct {
 	OutputTail *tailBuffer
 	OpenURL    func(string) error
 
-	startOpen func(func(string)) error
+	startOpen func(func(muxrpc.OpenEvent)) error
 	openPTY   func(muxrpc.PtyMeta) (*mux.Stream, error)
 	runPTY    func(*mux.Stream) error
+}
+
+type attachSwitchError struct {
+	App    string
+	Action string
+}
+
+func (e *attachSwitchError) Error() string {
+	return fmt.Sprintf("switching to %s", e.App)
 }
 
 func (s *AttachSession) Run() error {
@@ -57,10 +67,28 @@ func (s *AttachSession) Run() error {
 		}
 	}
 
-	if s.OpenURL != nil {
-		if err := startOpen(func(url string) {
-			if err := s.OpenURL(url); err != nil {
-				fmt.Fprintf(os.Stderr, "open url failed: %v\n", err)
+	var switchReq *attachSwitchError
+	var switchMu sync.Mutex
+	var ptyStream *mux.Stream
+	if startOpen != nil {
+		if err := startOpen(func(evt muxrpc.OpenEvent) {
+			if url := strings.TrimSpace(evt.URL); url != "" && s.OpenURL != nil {
+				if err := s.OpenURL(url); err != nil {
+					fmt.Fprintf(os.Stderr, "open url failed: %v\n", err)
+				}
+				return
+			}
+			app := strings.TrimSpace(evt.AttachApp)
+			if app == "" {
+				return
+			}
+			switchMu.Lock()
+			if switchReq == nil {
+				switchReq = &attachSwitchError{App: app, Action: strings.TrimSpace(evt.AttachAction)}
+			}
+			switchMu.Unlock()
+			if ptyStream != nil {
+				_ = ptyStream.Close()
 			}
 		}); err != nil {
 			return err
@@ -71,5 +99,18 @@ func (s *AttachSession) Run() error {
 	if err != nil {
 		return err
 	}
-	return runPTY(ptyStream)
+	switchMu.Lock()
+	pendingSwitch := switchReq
+	switchMu.Unlock()
+	if pendingSwitch != nil && ptyStream != nil {
+		_ = ptyStream.Close()
+	}
+	err = runPTY(ptyStream)
+	switchMu.Lock()
+	pendingSwitch = switchReq
+	switchMu.Unlock()
+	if pendingSwitch != nil {
+		return pendingSwitch
+	}
+	return err
 }

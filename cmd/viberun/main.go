@@ -359,7 +359,22 @@ func handleAttach(args []string) error {
 	if result.SubCommandFlags.Shell {
 		action = "shell"
 	}
-	return runShellInteractive(state, result.Args.App, action)
+	app := result.Args.App
+	for {
+		err := runShellInteractive(state, app, action)
+		if err == nil {
+			return nil
+		}
+		var switchErr *attachSwitchError
+		if errors.As(err, &switchErr) {
+			app = switchErr.App
+			if nextAction := strings.TrimSpace(switchErr.Action); nextAction != "" {
+				action = nextAction
+			}
+			continue
+		}
+		return err
+	}
 }
 
 func promptProxySetup() bool {

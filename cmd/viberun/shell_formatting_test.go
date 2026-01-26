@@ -9,7 +9,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 )
 
@@ -194,5 +196,13 @@ func TestViewNoExtraBlankLineAfterPromptOutput(t *testing.T) {
 	}
 	if lines[len(lines)-2] == "" {
 		t.Fatalf("expected no blank line between prompt output and prompt, got %q", rendered)
+	}
+}
+
+func TestRenderLoadingLineShowsBusyLabel(t *testing.T) {
+	m := shellModel{promptSpin: spinner.New(), state: &shellState{busyLabel: "Creating branch rainbow..."}}
+	m.promptSpin.Spinner = spinner.Spinner{Frames: []string{"*"}, FPS: 50 * time.Millisecond}
+	if got := renderLoadingLine(m); !strings.Contains(got, "Creating branch rainbow...") {
+		t.Fatalf("expected busy label in loading line, got %q", got)
 	}
 }

@@ -335,6 +335,8 @@ func runShellDelete(state *shellState, appArg string) error {
 	if err != nil {
 		return err
 	}
+	removeAppSummary(state, resolved.App)
+	markAppsStale(state)
 	appendCommandOutput(state, output)
 	return nil
 }
@@ -361,6 +363,8 @@ func runDeleteConfirmed(state *shellState, appArg string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	removeAppSummary(state, resolved.App)
+	markAppsStale(state)
 	output = strings.TrimRight(output, "\n")
 	if output == "" {
 		output = fmt.Sprintf("Deleted app %s", resolved.App)

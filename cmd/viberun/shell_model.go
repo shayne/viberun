@@ -218,6 +218,9 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			// Match shell behavior: clear the current input without exiting.
 			m.busy = false
+			if m.state != nil {
+				m.state.busyLabel = ""
+			}
 			m.input.SetValue("")
 			m.input.CursorEnd()
 			return m, nil
@@ -338,6 +341,9 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case commandResultMsg:
 		m.busy = false
+		if m.state != nil {
+			m.state.busyLabel = ""
+		}
 		if msg.output != "" {
 			m.state.appendOutput(msg.output)
 		}
@@ -347,6 +353,9 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.maybeRefreshTheme()
 	case startupConnectMsg:
 		m.busy = false
+		if m.state != nil {
+			m.state.busyLabel = ""
+		}
 		if msg.gateway != nil {
 			closeShellGateway(m.state)
 			m.state.gateway = msg.gateway
@@ -457,6 +466,9 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case hostSyncMsg:
 		m.state.syncing = false
 		m.busy = false
+		if m.state != nil {
+			m.state.busyLabel = ""
+		}
 		if msg.gateway != nil {
 			closeShellGateway(m.state)
 			m.state.gateway = msg.gateway
@@ -523,9 +535,15 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case shellActionMsg:
 		m.state.shellAction = &msg.action
 		m.busy = false
+		if m.state != nil {
+			m.state.busyLabel = ""
+		}
 		return m, tea.Quit
 	case interactivePreparedMsg:
 		m.busy = false
+		if m.state != nil {
+			m.state.busyLabel = ""
+		}
 		if msg.err != nil {
 			m.state.appendOutput(fmt.Sprintf("error: %v", msg.err))
 			return m, nil
@@ -566,6 +584,9 @@ func (m shellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case appsLoadedMsg:
 		m.state.appsSyncing = false
 		m.busy = false
+		if m.state != nil {
+			m.state.busyLabel = ""
+		}
 		if msg.err != nil {
 			if msg.fromAppsCmd && (m.state.syncing || !gatewayReady(m.state)) {
 				m.state.pendingCmd = &pendingCommand{cmd: parsedCommand{name: "apps"}, scope: scopeGlobal}
@@ -944,7 +965,18 @@ func renderPrompt(m shellModel) string {
 }
 
 func renderLoadingLine(m shellModel) string {
-	return m.promptSpin.View()
+	label := ""
+	if m.state != nil {
+		label = strings.TrimSpace(m.state.busyLabel)
+	}
+	if label == "" {
+		return m.promptSpin.View()
+	}
+	theme := shellTheme()
+	if !theme.Enabled {
+		return fmt.Sprintf("%s %s", m.promptSpin.View(), label)
+	}
+	return fmt.Sprintf("%s %s", theme.StatusConnecting.Render(m.promptSpin.View()), theme.Muted.Render(label))
 }
 
 func renderStartupLine(m shellModel) string {

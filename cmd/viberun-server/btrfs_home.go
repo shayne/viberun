@@ -20,9 +20,10 @@ import (
 )
 
 const (
-	homeVolumeBaseDir = "/var/lib/viberun/apps"
-	homeVolumeSize    = int64(1_000_000_000_000) // 1 TB sparse file
+	homeVolumeSize = int64(1_000_000_000_000) // 1 TB sparse file
 )
+
+var homeVolumeBaseDir = "/var/lib/viberun/apps"
 
 var (
 	cachedImageUser string

@@ -18,6 +18,11 @@ Usage:
   vrctl host snapshot
   vrctl host snapshots
   vrctl host restore <snapshot-ref>
+  vrctl host branch list
+  vrctl host branch create <name> [--attach] [--allow-existing]
+  vrctl host branch delete <name> [--attach]
+  vrctl host branch apply [name] [--attach]
+  vrctl host attach <app> [--shell]
   vrctl host urls public|private|disable|enable
 EOF
   exit 2
@@ -373,6 +378,163 @@ host_restore() {
   echo "restore triggered for ${app_name}; reconnecting to the session" >&2
 }
 
+host_branch_create() {
+  branch=""
+  attach="0"
+  allow_existing="0"
+  action=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --attach)
+        attach="1"
+        allow_existing="1"
+        shift
+        ;;
+      --allow-existing)
+        allow_existing="1"
+        shift
+        ;;
+      --shell)
+        action="shell"
+        shift
+        ;;
+      --help|-h)
+        usage
+        ;;
+      *)
+        if [ -z "$branch" ]; then
+          branch="$1"
+          shift
+        else
+          die "unexpected argument: $1"
+        fi
+        ;;
+    esac
+  done
+  [ -n "$branch" ] || usage
+  socket="${VIBERUN_HOST_RPC_SOCKET:-/var/run/viberun-hostrpc/rpc.sock}"
+  token_file="${VIBERUN_HOST_RPC_TOKEN_FILE:-/var/run/viberun-hostrpc/token}"
+  [ -S "$socket" ] || die "host rpc socket not available; restart the app session"
+  [ -r "$token_file" ] || die "host rpc token not available; restart the app session"
+  token="$(tr -d '\n' < "$token_file")"
+  [ -n "$token" ] || die "host rpc token not available; restart the app session"
+  command -v curl >/dev/null 2>&1 || die "curl is required for host branch create"
+  url="http://localhost/branch/create"
+  if [ "$allow_existing" = "1" ]; then
+    url="${url}?allow-existing=1"
+  fi
+  derived="$(printf '%s' "$branch" | curl -fsS --unix-socket "$socket" -H "Authorization: Bearer $token" -X POST --data-binary @- "$url")"
+  if [ -z "$derived" ]; then
+    die "branch create did not return a derived app name"
+  fi
+  if [ "$attach" = "1" ]; then
+    host_attach "$derived" "$action"
+  fi
+  printf '%s\n' "$derived"
+}
+
+host_branch_list() {
+  socket="${VIBERUN_HOST_RPC_SOCKET:-/var/run/viberun-hostrpc/rpc.sock}"
+  token_file="${VIBERUN_HOST_RPC_TOKEN_FILE:-/var/run/viberun-hostrpc/token}"
+  [ -S "$socket" ] || die "host rpc socket not available; restart the app session"
+  [ -r "$token_file" ] || die "host rpc token not available; restart the app session"
+  token="$(tr -d '\n' < "$token_file")"
+  [ -n "$token" ] || die "host rpc token not available; restart the app session"
+  command -v curl >/dev/null 2>&1 || die "curl is required for host branch list"
+  curl -fsS --unix-socket "$socket" -H "Authorization: Bearer $token" http://localhost/branch/list
+}
+
+host_branch_delete() {
+  attach="0"
+  branch=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --attach)
+        attach="1"
+        shift
+        ;;
+      --help|-h)
+        usage
+        ;;
+      *)
+        if [ -z "$branch" ]; then
+          branch="$1"
+          shift
+        else
+          die "unexpected argument: $1"
+        fi
+        ;;
+    esac
+  done
+  [ -n "$branch" ] || usage
+  socket="${VIBERUN_HOST_RPC_SOCKET:-/var/run/viberun-hostrpc/rpc.sock}"
+  token_file="${VIBERUN_HOST_RPC_TOKEN_FILE:-/var/run/viberun-hostrpc/token}"
+  [ -S "$socket" ] || die "host rpc socket not available; restart the app session"
+  [ -r "$token_file" ] || die "host rpc token not available; restart the app session"
+  token="$(tr -d '\n' < "$token_file")"
+  [ -n "$token" ] || die "host rpc token not available; restart the app session"
+  command -v curl >/dev/null 2>&1 || die "curl is required for host branch delete"
+  url="http://localhost/branch/delete"
+  if [ "$attach" = "1" ]; then
+    url="${url}?attach=1"
+  fi
+  printf '%s' "$branch" | curl -fsS --unix-socket "$socket" -H "Authorization: Bearer $token" -X POST --data-binary @- "$url" >/dev/null
+}
+
+host_branch_apply() {
+  branch=""
+  attach=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --attach)
+        attach="1"
+        shift
+        ;;
+      --help|-h)
+        usage
+        ;;
+      *)
+        if [ -z "$branch" ]; then
+          branch="$1"
+          shift
+        else
+          die "unexpected argument: $1"
+        fi
+        ;;
+    esac
+  done
+  socket="${VIBERUN_HOST_RPC_SOCKET:-/var/run/viberun-hostrpc/rpc.sock}"
+  token_file="${VIBERUN_HOST_RPC_TOKEN_FILE:-/var/run/viberun-hostrpc/token}"
+  [ -S "$socket" ] || die "host rpc socket not available; restart the app session"
+  [ -r "$token_file" ] || die "host rpc token not available; restart the app session"
+  token="$(tr -d '\n' < "$token_file")"
+  [ -n "$token" ] || die "host rpc token not available; restart the app session"
+  command -v curl >/dev/null 2>&1 || die "curl is required for host branch apply"
+  url="http://localhost/branch/apply"
+  if [ "$attach" = "1" ] || [ -z "$branch" ]; then
+    url="${url}?attach=1"
+  fi
+  if [ -n "$branch" ]; then
+    printf '%s' "$branch" | curl -fsS --unix-socket "$socket" -H "Authorization: Bearer $token" -X POST --data-binary @- "$url"
+  else
+    curl -fsS --unix-socket "$socket" -H "Authorization: Bearer $token" -X POST "$url"
+  fi
+}
+
+host_attach() {
+  [ $# -ge 1 ] || usage
+  app="$1"
+  action="${2:-}"
+  socket="${VIBERUN_XDG_OPEN_SOCKET:-/tmp/viberun-open.sock}"
+  [ -S "$socket" ] || die "open socket not available; restart the app session"
+  command -v curl >/dev/null 2>&1 || die "curl is required for host attach"
+  if [ -n "$action" ]; then
+    curl -fsS --unix-socket "$socket" -X POST --data-urlencode "app=$app" --data-urlencode "action=$action" http://localhost/attach >/dev/null
+  else
+    curl -fsS --unix-socket "$socket" -X POST --data-urlencode "app=$app" http://localhost/attach >/dev/null
+  fi
+}
+
 host_urls() {
   [ $# -eq 1 ] || usage
   action="$1"
@@ -420,6 +582,19 @@ main() {
         snapshot) host_snapshot ;;
         snapshots) host_snapshots ;;
         restore) host_restore "$@" ;;
+        branch)
+          [ $# -ge 1 ] || usage
+          action="$1"
+          shift 1
+          case "$action" in
+            list) host_branch_list ;;
+            create) host_branch_create "$@" ;;
+            delete) host_branch_delete "$@" ;;
+            apply) host_branch_apply "$@" ;;
+            *) usage ;;
+          esac
+          ;;
+        attach) host_attach "$@" ;;
         urls) host_urls "$@" ;;
         *) usage ;;
       esac

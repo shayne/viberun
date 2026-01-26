@@ -15,6 +15,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 
 	"github.com/shayne/viberun/internal/agents"
+	branchpkg "github.com/shayne/viberun/internal/branch"
 	"github.com/shayne/viberun/internal/config"
 	"github.com/shayne/viberun/internal/target"
 )
@@ -23,6 +24,11 @@ type parsedCommand struct {
 	name            string
 	args            []string
 	enforceExisting bool
+}
+
+type vibeArgs struct {
+	app    string
+	branch string
 }
 
 type pendingCommand struct {
@@ -84,6 +90,9 @@ func executeShellCommand(state *shellState, cmd parsedCommand, scope shellScope,
 	cmd = normalizeCommand(cmd)
 	if cmd.name == "" {
 		return "", nil
+	}
+	if cmd.name == "vibe" && vibeHasBranchFlag(cmd.args) {
+		cmd.enforceExisting = true
 	}
 	if scope == scopeGlobal && len(cmd.args) == 0 && !isKnownCommandName(cmd.name) {
 		cmd = parsedCommand{name: "vibe", args: []string{cmd.name}, enforceExisting: true}
@@ -238,6 +247,13 @@ func localAppValidationError(state *shellState, cmd parsedCommand) (string, bool
 		return "", false
 	}
 	app := strings.TrimSpace(cmd.args[0])
+	if cmd.name == "vibe" {
+		parsed, err := parseVibeArgs(cmd.args)
+		if err != nil {
+			return renderShellError(fmt.Sprintf("error: %v", err)), true
+		}
+		app = strings.TrimSpace(parsed.app)
+	}
 	if app == "" || appExists(state, app) {
 		return "", false
 	}
@@ -325,16 +341,24 @@ func dispatchGlobalCommand(state *shellState, cmd parsedCommand) (string, tea.Cm
 		setAppContext(state, cmd.args[0])
 		return fmt.Sprintf("Entered config for %s", state.app), nil
 	case "vibe":
-		if len(cmd.args) < 1 {
-			return "error: vibe requires an app name", nil
+		parsed, err := parseVibeArgs(cmd.args)
+		if err != nil {
+			return fmt.Sprintf("error: %v", err), nil
 		}
-		if cmd.enforceExisting && !appExists(state, cmd.args[0]) {
-			return renderShellError(fmt.Sprintf("error: app %q not found. Run `vibe %s` to create it.", cmd.args[0], cmd.args[0])), nil
+		if parsed.branch != "" {
+			if state.appsLoaded && !appExists(state, parsed.app) {
+				return renderShellError(fmt.Sprintf("error: app %q not found", parsed.app)), nil
+			}
+			state.busyLabel = fmt.Sprintf("Creating branch %s...", parsed.branch)
+			return "", prepareBranchVibeCmd(state, parsed.app, parsed.branch)
 		}
-		if state.appsLoaded && !cmd.enforceExisting && !appExists(state, cmd.args[0]) {
-			state.apps = append(state.apps, appSummary{Name: cmd.args[0]})
+		if cmd.enforceExisting && !appExists(state, parsed.app) {
+			return renderShellError(fmt.Sprintf("error: app %q not found. Run `vibe %s` to create it.", parsed.app, parsed.app)), nil
 		}
-		return "", prepareInteractiveCmd(state, shellAction{kind: actionVibe, app: cmd.args[0]})
+		if state.appsLoaded && !cmd.enforceExisting && !appExists(state, parsed.app) {
+			state.apps = append(state.apps, appSummary{Name: parsed.app})
+		}
+		return "", prepareInteractiveCmd(state, shellAction{kind: actionVibe, app: parsed.app})
 	case "shell":
 		if len(cmd.args) < 1 {
 			return "error: shell requires an app name", nil
@@ -362,6 +386,8 @@ func dispatchGlobalCommand(state *shellState, cmd parsedCommand) (string, tea.Cm
 		}
 		beginDeletePrompt(state, cmd.args[0])
 		return "", nil
+	case "branch":
+		return handleBranchShell(state, scopeGlobal, cmd.args)
 	case "config":
 		return handleConfigShell(state, cmd.args)
 	case "setup":
@@ -440,7 +466,18 @@ func dispatchAppCommand(state *shellState, cmd parsedCommand) (string, tea.Cmd) 
 		setAppContext(state, "")
 		return "", nil
 	case "vibe":
-		return "", prepareInteractiveCmd(state, shellAction{kind: actionVibe, app: state.app})
+		if len(cmd.args) == 0 {
+			return "", prepareInteractiveCmd(state, shellAction{kind: actionVibe, app: state.app})
+		}
+		parsed, err := parseVibeArgs(append([]string{state.app}, cmd.args...))
+		if err != nil {
+			return fmt.Sprintf("error: %v", err), nil
+		}
+		if parsed.branch == "" {
+			return "error: usage: vibe [--branch <branch>]", nil
+		}
+		state.busyLabel = fmt.Sprintf("Creating branch %s...", parsed.branch)
+		return "", prepareBranchVibeCmd(state, parsed.app, parsed.branch)
 	case "shell":
 		return "", prepareInteractiveCmd(state, shellAction{kind: actionShell, app: state.app})
 	case "open":
@@ -451,6 +488,8 @@ func dispatchAppCommand(state *shellState, cmd parsedCommand) (string, tea.Cmd) 
 		return "", runAsync(func() (string, error) {
 			return renderAppSummary(state)
 		})
+	case "branch":
+		return handleBranchShell(state, scopeAppConfig, cmd.args)
 	case "snapshot":
 		return "", runAsync(func() (string, error) {
 			return runAppServerCommand(state, []string{"snapshot"})
@@ -472,7 +511,17 @@ func dispatchAppCommand(state *shellState, cmd parsedCommand) (string, tea.Cmd) 
 			return runAppServerCommand(state, []string{"update"})
 		})
 	case "delete", "rm":
-		return "", shellActionCmd(shellAction{kind: actionDelete, app: state.app})
+		targetApp := strings.TrimSpace(state.app)
+		if len(cmd.args) > 0 {
+			if len(cmd.args) > 1 {
+				return "error: delete accepts a single app name", nil
+			}
+			targetApp = strings.TrimSpace(cmd.args[0])
+		}
+		if targetApp == "" {
+			return "error: delete requires an app name", nil
+		}
+		return "", shellActionCmd(shellAction{kind: actionDelete, app: targetApp})
 	case "url":
 		return handleURLShell(state, cmd.args)
 	case "users":
@@ -566,6 +615,71 @@ func handleUsersShell(state *shellState, args []string) (string, tea.Cmd) {
 	default:
 		return "error: usage: users list|add|remove|set-password [host]", nil
 	}
+}
+
+func handleBranchShell(state *shellState, scope shellScope, args []string) (string, tea.Cmd) {
+	if len(args) == 0 {
+		return renderCommandHelp("branch", scope), nil
+	}
+	action := strings.TrimSpace(args[0])
+	switch strings.ToLower(action) {
+	case "", "help", "--help", "-h", "?":
+		return renderCommandHelp("branch", scope), nil
+	}
+	action = strings.ToLower(action)
+	base := ""
+	branch := ""
+	argOffset := 1
+	if scope == scopeAppConfig {
+		base = strings.TrimSpace(state.app)
+	} else {
+		if len(args) < 2 {
+			return "error: branch requires an app name", nil
+		}
+		base = strings.TrimSpace(args[1])
+		argOffset = 2
+	}
+	if base == "" {
+		return "error: app name required", nil
+	}
+	switch action {
+	case "list":
+		if len(args) > argOffset {
+			return "error: branch list does not take a branch name", nil
+		}
+	case "create", "delete", "rm", "apply":
+		if len(args) <= argOffset {
+			return fmt.Sprintf("error: branch %s requires a branch name", action), nil
+		}
+		branch = strings.TrimSpace(strings.Join(args[argOffset:], " "))
+		if branch == "" {
+			return fmt.Sprintf("error: branch %s requires a branch name", action), nil
+		}
+	default:
+		if scope == scopeAppConfig {
+			return "error: usage: branch list | branch create <branch> | branch delete <branch> | branch apply <branch>", nil
+		}
+		return "error: usage: branch list <app> | branch create <app> <branch> | branch delete <app> <branch> | branch apply <app> <branch>", nil
+	}
+	if action == "rm" {
+		action = "delete"
+	}
+	serverArgs := []string{"branch", action, base}
+	if branch != "" {
+		serverArgs = append(serverArgs, branch)
+	}
+	return "", runAsync(func() (string, error) {
+		output, err := runHostServerCommand(state, serverArgs)
+		if err != nil {
+			return output, err
+		}
+		if action == "delete" && branch != "" {
+			if derived, derr := branchpkg.DerivedAppName(base, branch); derr == nil {
+				removeAppSummary(state, derived)
+			}
+		}
+		return output, nil
+	})
 }
 
 func handleURLShell(state *shellState, args []string) (string, tea.Cmd) {
@@ -1008,6 +1122,44 @@ func runURLDomainChange(state *shellState, domain string, reset bool) (string, e
 	return buf.String(), nil
 }
 
+func runHostServerCommand(state *shellState, args []string) (string, error) {
+	if state == nil {
+		return "", errors.New("gateway not connected")
+	}
+	if state.gateway == nil {
+		return "", errors.New("gateway not connected")
+	}
+	output, err := state.gateway.command(args, "", nil)
+	if err != nil {
+		return "", err
+	}
+	output = strings.TrimRight(output, "\n")
+	if output == "" {
+		return "OK", nil
+	}
+	return output, nil
+}
+
+func runBranchCreate(state *shellState, app string, branch string) error {
+	app = strings.TrimSpace(app)
+	branch = strings.TrimSpace(branch)
+	if app == "" {
+		return fmt.Errorf("app name required")
+	}
+	if branch == "" {
+		return fmt.Errorf("branch name required")
+	}
+	_, err := runHostServerCommand(state, []string{"branch", "create", app, branch})
+	return err
+}
+
+func isBranchAlreadyExistsError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "branch already exists")
+}
+
 func runAppServerCommand(state *shellState, args []string) (string, error) {
 	resolved, err := resolveAppTarget(state)
 	if err != nil {
@@ -1070,6 +1222,27 @@ func prepareInteractiveCmd(state *shellState, action shellAction) tea.Cmd {
 	}
 }
 
+func prepareBranchVibeCmd(state *shellState, app string, branch string) tea.Cmd {
+	return func() tea.Msg {
+		derived, err := branchpkg.DerivedAppName(app, branch)
+		if err != nil {
+			return interactivePreparedMsg{action: shellAction{kind: actionVibe, app: app}, err: err}
+		}
+		if err := runBranchCreate(state, app, branch); err != nil && !isBranchAlreadyExistsError(err) {
+			return interactivePreparedMsg{action: shellAction{kind: actionVibe, app: derived}, err: err}
+		}
+		action := shellAction{kind: actionVibe, app: derived}
+		session, fallback, err := prepareInteractiveSession(state, derived, "")
+		if err != nil {
+			return interactivePreparedMsg{action: action, err: err}
+		}
+		if fallback || session == nil {
+			return interactivePreparedMsg{action: action, fallback: true}
+		}
+		return interactivePreparedMsg{action: action, session: session}
+	}
+}
+
 func waitCmd() tea.Cmd {
 	return func() tea.Msg {
 		return nil
@@ -1111,6 +1284,62 @@ func beginDeletePrompt(state *shellState, app string) {
 		return
 	}
 	state.confirmDeleteApp = app
+}
+
+func vibeHasBranchFlag(args []string) bool {
+	for _, arg := range args {
+		part := strings.TrimSpace(arg)
+		if part == "--branch" || strings.HasPrefix(part, "--branch=") {
+			return true
+		}
+	}
+	return false
+}
+
+func parseVibeArgs(args []string) (vibeArgs, error) {
+	out := vibeArgs{}
+	for i := 0; i < len(args); i++ {
+		part := strings.TrimSpace(args[i])
+		if part == "" {
+			continue
+		}
+		if part == "--branch" {
+			if i+1 >= len(args) {
+				return vibeArgs{}, fmt.Errorf("missing value for --branch")
+			}
+			if out.branch != "" {
+				return vibeArgs{}, fmt.Errorf("duplicate --branch flag")
+			}
+			out.branch = strings.TrimSpace(args[i+1])
+			i++
+			if out.branch == "" {
+				return vibeArgs{}, fmt.Errorf("missing value for --branch")
+			}
+			continue
+		}
+		if strings.HasPrefix(part, "--branch=") {
+			if out.branch != "" {
+				return vibeArgs{}, fmt.Errorf("duplicate --branch flag")
+			}
+			out.branch = strings.TrimSpace(strings.TrimPrefix(part, "--branch="))
+			if out.branch == "" {
+				return vibeArgs{}, fmt.Errorf("missing value for --branch")
+			}
+			continue
+		}
+		if strings.HasPrefix(part, "--") {
+			return vibeArgs{}, fmt.Errorf("unknown flag: %s", part)
+		}
+		if out.app == "" {
+			out.app = part
+			continue
+		}
+		return vibeArgs{}, fmt.Errorf("unexpected argument: %s", part)
+	}
+	if strings.TrimSpace(out.app) == "" {
+		return vibeArgs{}, fmt.Errorf("vibe requires an app name")
+	}
+	return out, nil
 }
 
 func parseUsersArgs(args []string) (string, string, error) {

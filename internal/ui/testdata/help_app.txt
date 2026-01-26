@@ -1,24 +1,29 @@
 
 Commands:
-  show                       # show app summary
-  vibe                       # attach to the app session
-  shell                      # open an app shell
-  snapshot                   # create a snapshot
-  snapshots                  # list snapshots
-  restore <vN|latest>        # restore snapshot
-  update                     # recreate container
-  delete                     # delete app
-  open                       # open app URL
-  url                        # manage app URL
-    url show                 # show URL info
-    url open                 # open URL in browser
-    url public               # allow public access
-    url private              # require login
-    url disable              # disable the URL
-    url enable               # enable the URL
-    url set-domain <domain>  # set a custom domain
-    url reset-domain         # reset to default domain
-  users                      # manage app access
-  help                       # show this help
+  show                                        # show app summary
+  vibe [--branch <branch>]                    # attach to the app session
+  shell                                       # open an app shell
+  snapshot                                    # create a snapshot
+  snapshots                                   # list snapshots
+  restore <vN|latest>                         # restore snapshot
+  update                                      # recreate container
+  delete                                      # delete app
+  open                                        # open app URL
+  branch <list|create|delete|apply> [branch]  # manage branch environments
+    branch list                               # list branches for this app
+    branch create <branch>                    # create a new branch env
+    branch delete <branch>                    # delete a branch env
+    branch apply <branch>                     # apply a branch to this app
+  url                                         # manage app URL
+    url show                                  # show URL info
+    url open                                  # open URL in browser
+    url public                                # allow public access
+    url private                               # require login
+    url disable                               # disable the URL
+    url enable                                # enable the URL
+    url set-domain <domain>                   # set a custom domain
+    url reset-domain                          # reset to default domain
+  users                                       # manage app access
+  help                                        # show this help
 
 Run `help <command>` for more details.

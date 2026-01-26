@@ -46,6 +46,22 @@ This AGENTS.md applies to the app working directory inside the container.
 - To roll back, use `vrctl host restore latest` or `vrctl host restore vN`.
 - Restore will briefly detach from tmux and then reconnect once the container is back up.
 
+## Branch environments
+- Branch environments are managed by viberun, not git. `/home/viberun/app` might not be a git repo.
+- Current context is available via `$VIBERUN_APP`. If it contains `--`, you are in a branch container.
+- Natural language mapping:
+  - “Apply this branch” → if `$VIBERUN_APP` has `--`, run `apply` immediately (no git checks, no extra prompts). On success it auto-switches to the base app. Otherwise list branches and apply if there is exactly one; if multiple, ask which.
+  - “Create a branch <name>” → `vrctl host branch create <name> --attach` (auto-switch).
+  - “Delete branch <name>” → confirm, then `vrctl host branch delete <name> --attach`.
+  - “Delete this branch” (while `$VIBERUN_APP` contains `--`) → confirm, then parse the branch name from `$VIBERUN_APP` and run `vrctl host branch delete <branch> --attach` (auto-switches to base).
+- List branches (from base app container): `vrctl host branch list`.
+- Apply back to base:
+  - From the branch container: `apply` (no args, auto-switches to base).
+  - From the base container: `apply <branch>` or `vrctl host branch apply <branch> --attach`.
+- When the user explicitly asks to apply, do not prompt for snapshots; execute the apply and report errors if they occur.
+- Conflicts: use `$branch-apply-conflicts` and resolve markers in `/home/viberun/app`, then rerun apply.
+- Data changes are not promoted; migrations must live in `app/`.
+
 ## User experience
 - Keep instructions simple and action-oriented.
 - After starting services, verify status/logs and share the local URL.
