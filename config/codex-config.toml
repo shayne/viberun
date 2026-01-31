@@ -1,6 +1,8 @@
+web_search = "live"
+
 [features]
-skills = true
-web_search_request = true
-unified_exec = true
+collab = true
 shell_snapshot = true
+skills = true
 steer = true
+unified_exec = true
