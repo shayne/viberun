@@ -278,7 +278,10 @@ func runGitCommandCapture(dir string, args ...string) (string, error) {
 func runGitCommandSafe(dir string, safeDir string, args ...string) error {
 	cmdArgs := append([]string{}, args...)
 	if strings.TrimSpace(safeDir) != "" {
-		cmdArgs = append([]string{"-c", fmt.Sprintf("safe.directory=%s", safeDir)}, cmdArgs...)
+		cmdArgs = append([]string{
+			"-c", "safe.directory=",
+			"-c", fmt.Sprintf("safe.directory=%s", safeDir),
+		}, cmdArgs...)
 	}
 	return runGitCommand(dir, cmdArgs...)
 }
@@ -286,7 +289,10 @@ func runGitCommandSafe(dir string, safeDir string, args ...string) error {
 func runGitCommandCaptureSafe(dir string, safeDir string, args ...string) (string, error) {
 	cmdArgs := append([]string{}, args...)
 	if strings.TrimSpace(safeDir) != "" {
-		cmdArgs = append([]string{"-c", fmt.Sprintf("safe.directory=%s", safeDir)}, cmdArgs...)
+		cmdArgs = append([]string{
+			"-c", "safe.directory=",
+			"-c", fmt.Sprintf("safe.directory=%s", safeDir),
+		}, cmdArgs...)
 	}
 	return runGitCommandCapture(dir, cmdArgs...)
 }
